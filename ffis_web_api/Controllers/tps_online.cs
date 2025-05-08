@@ -1,0 +1,218 @@
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+using System;
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+using System.Data;
+using System.Data.SqlClient;
+using System.Globalization;
+using System.Linq;
+using System.Runtime.Intrinsics.X86;
+using System.Threading.Tasks;
+using static Microsoft.EntityFrameworkCore.DbLoggerCategory.Database;
+
+namespace ffis_web_api.Controllers
+{
+    [Route("api/[controller]")]
+    [ApiController]
+    [Authorize]
+    public class tps_online : Controller
+    {
+        private readonly IConfiguration _configuration;
+        private readonly ILogger<tps_online> _logger;
+        private const string LogFilePath = "C:\\LogAPIFFIS\\ApiLogKO.txt";
+
+        public tps_online(IConfiguration configuration, ILogger<tps_online> logger)
+        {
+            _configuration = configuration;
+            _logger = logger;
+        }
+
+        [HttpGet("GetMasterBarang")]
+        public async Task<IActionResult> GetMasterBarangByMAWB([FromQuery] string MAWB)
+        {
+            var sqlDataSource = _configuration.GetConnectionString("FFISDB");
+
+            try
+            {
+                await using var connection = new SqlConnection(sqlDataSource);
+                await connection.OpenAsync();
+
+                var command = new SqlCommand("sp_FFIS_API_TPS_Online", connection)
+                {
+                    CommandType = CommandType.StoredProcedure
+                };
+                command.Parameters.Add(new SqlParameter("@StatementType", SqlDbType.NVarChar) { Value = "GetMasterBarang" });
+                command.Parameters.Add(new SqlParameter("@MasterAWB", SqlDbType.NVarChar) { Value = MAWB });
+
+                await using var reader = await command.ExecuteReaderAsync();
+                if (await reader.ReadAsync())
+                {
+                    var data = new ResponseDataMasterBarang
+                    {
+                        MasterAWB = reader["MasterAWB"]?.ToString(),
+                        CarrierCode = reader["CarrierCode"]?.ToString(),
+                        MAWBIssuedDate = reader["MAWBIssuedDate"]?.ToString(),
+                        FlightVoyage = reader["FlightVoyage"]?.ToString(),
+                        Jumlah = reader["Jumlah"] != DBNull.Value ? Convert.ToInt32(reader["Jumlah"]) : null,
+                        Bruto = reader["Bruto"] != DBNull.Value ? Convert.ToInt32(reader["Bruto"]) : null,
+                        ChargeBruto = reader["ChargeBruto"] != DBNull.Value ? Convert.ToInt32(reader["ChargeBruto"]) : null,
+                        ConsolATA = reader["ConsolATA"]?.ToString(),
+                        FirstLoad = reader["FirstLoad"]?.ToString(),
+                        LastDisch = reader["LastDisch"]?.ToString(),
+                        BC11No = reader["BC11No"]?.ToString(),
+                        POS = reader["POS"]?.ToString()
+                    };
+                    return Ok(data);
+                }
+
+                return NotFound(new { message = "MAWB not found" });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error fetching data for MAWB {MAWB}");
+                return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Error fetching data", error = ex.Message });
+            }
+        }
+
+        [HttpGet("GetBarangBongkarKapalpesawat")]
+        public async Task<IActionResult> GetBarangBongkarKapalpesawatByMAWB([FromQuery] string MAWB)
+        {
+            var sqlDataSource = _configuration.GetConnectionString("FFISDB");
+
+            try
+            {
+                await using var connection = new SqlConnection(sqlDataSource);
+                await connection.OpenAsync();
+
+                var command = new SqlCommand("sp_FFIS_API_TPS_Online", connection)
+                {
+                    CommandType = CommandType.StoredProcedure
+                };
+                command.Parameters.Add(new SqlParameter("@StatementType", SqlDbType.NVarChar) { Value = "GetBarang_Bongkar_Kapal_pesawat" });
+                command.Parameters.Add(new SqlParameter("@MasterAWB", SqlDbType.NVarChar) { Value = MAWB });
+
+                await using var reader = await command.ExecuteReaderAsync();
+
+                var result = new List<ResponseDataBongkarKapalpesawat>();
+
+                while (await reader.ReadAsync())
+                {
+                    var data = new ResponseDataBongkarKapalpesawat
+                    {
+                        MasterAWB = reader["MasterAWB"]?.ToString(),
+                        Jumlah = reader["Jumlah"] != DBNull.Value ? Convert.ToInt32(reader["Jumlah"]) : null,
+                        Bruto = reader["Bruto"] != DBNull.Value ? Convert.ToInt32(reader["Bruto"]) : null,
+                        ChargeBruto = reader["ChargeBruto"] != DBNull.Value ? Convert.ToInt32(reader["ChargeBruto"]) : null
+                    };
+                    result.Add(data);
+                }
+                if (result.Any())
+                    return Ok(result);
+
+                return NotFound(new { message = "MAWB not found" });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error fetching data for MAWB {MAWB}");
+                return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Error fetching data", error = ex.Message });
+            }
+        }
+
+        [HttpGet("GetBarangAsalPLPOBImport")]
+        public async Task<IActionResult> GetBarangAsalPLPOBImportByMAWB([FromQuery] string MAWB)
+        {
+            var sqlDataSource = _configuration.GetConnectionString("FFISDB");
+
+            try
+            {
+                await using var connection = new SqlConnection(sqlDataSource);
+                await connection.OpenAsync();
+
+                var command = new SqlCommand("sp_FFIS_API_TPS_Online", connection)
+                {
+                    CommandType = CommandType.StoredProcedure
+                };
+                command.Parameters.Add(new SqlParameter("@StatementType", SqlDbType.NVarChar) { Value = "GetBarang_Asal_PLP_OB_Import" });
+                command.Parameters.Add(new SqlParameter("@MasterAWB", SqlDbType.NVarChar) { Value = MAWB });
+
+                await using var reader = await command.ExecuteReaderAsync();
+                var result = new List<ResponseDataBarangAsalPLPOBImport>();
+
+                while (await reader.ReadAsync())
+                {
+                    var data = new ResponseDataBarangAsalPLPOBImport
+                    {
+                        MasterAWB = reader["MasterAWB"]?.ToString(),
+                        Komoditi = reader["Komoditi"]?.ToString(),
+                        HouseBill = reader["HouseBill"]?.ToString(),
+                        Jumlah = reader["Jumlah"] != DBNull.Value ? Convert.ToInt32(reader["Jumlah"]) : null,
+                        Bruto = reader["Bruto"] != DBNull.Value ? Convert.ToInt32(reader["Bruto"]) : null,
+                        ChargeBruto = reader["ChargeBruto"] != DBNull.Value ? Convert.ToInt32(reader["ChargeBruto"]) : null,
+                        ConsigneeCode = reader["ConsigneeCode"]?.ToString(),
+                        ConsigneeName = reader["ConsigneeName"]?.ToString(),
+                        POS = reader["POS"]?.ToString(),
+                        SubPos = reader["SubPos"]?.ToString(),
+                        FirstLoad = reader["FirstLoad"]?.ToString(),
+                        LastDisch = reader["LastDisch"]?.ToString()
+                    };
+
+                    result.Add(data);
+                }
+
+                if (result.Any())
+                    return Ok(result);
+
+                return NotFound(new { message = "MAWB not found" });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error fetching data for MAWB {MAWB}");
+                return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Error fetching data", error = ex.Message });
+            }
+        }
+
+        public class ResponseDataMasterBarang
+        {
+            public string? MasterAWB { get; set; }
+            public string? CarrierCode { get; set; }
+            public string? MAWBIssuedDate { get; set; }
+            public string? FlightVoyage { get; set; }
+            public int? Jumlah { get; set; }
+            public int? Bruto { get; set; }
+            public int? ChargeBruto { get; set; }
+            public string? ConsolATA { get; set; }
+            public string? FirstLoad { get; set; }
+            public string? LastDisch { get; set; }
+            public string? BC11No { get; set; }
+            public string? POS { get; set; }
+        }
+
+        public class ResponseDataBongkarKapalpesawat
+        {
+            public string? MasterAWB { get; set; }
+            public int? Jumlah { get; set; }
+            public int? Bruto { get; set; }
+            public int? ChargeBruto { get; set; }
+        }
+
+        public class ResponseDataBarangAsalPLPOBImport
+        {
+            public string? MasterAWB { get; set; }
+            public string? Komoditi { get; set; }
+            public string? HouseBill { get; set; }
+            public int? Jumlah { get; set; }
+            public int? Bruto { get; set; }
+            public int? ChargeBruto { get; set; }
+            public string? ConsigneeCode { get; set; }
+            public string? ConsigneeName { get; set; }
+            public string? POS { get; set; }
+            public string? SubPos { get; set; }
+            public string? FirstLoad { get; set; }
+            public string? LastDisch { get; set; }
+        }
+    }
+}
