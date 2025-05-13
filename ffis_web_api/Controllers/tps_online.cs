@@ -57,9 +57,9 @@ namespace ffis_web_api.Controllers
                         CarrierCode = reader["CarrierCode"]?.ToString(),
                         MAWBIssuedDate = reader["MAWBIssuedDate"]?.ToString(),
                         FlightVoyage = reader["FlightVoyage"]?.ToString(),
-                        Jumlah = reader["Jumlah"] != DBNull.Value ? Convert.ToInt32(reader["Jumlah"]) : null,
-                        Bruto = reader["Bruto"] != DBNull.Value ? Convert.ToInt32(reader["Bruto"]) : null,
-                        ChargeBruto = reader["ChargeBruto"] != DBNull.Value ? Convert.ToInt32(reader["ChargeBruto"]) : null,
+                        Jumlah = reader["Jumlah"] != DBNull.Value ? Convert.ToDecimal(reader["Jumlah"]) : 0m,
+                        Bruto = reader["Bruto"] != DBNull.Value ? Convert.ToDecimal(reader["Bruto"]) : 0m,
+                        ChargeBruto = reader["ChargeBruto"] != DBNull.Value ? Convert.ToDecimal(reader["ChargeBruto"]) : 0m,
                         ConsolATA = reader["ConsolATA"]?.ToString(),
                         FirstLoad = reader["FirstLoad"]?.ToString(),
                         LastDisch = reader["LastDisch"]?.ToString(),
@@ -104,9 +104,9 @@ namespace ffis_web_api.Controllers
                     var data = new ResponseDataBongkarKapalpesawat
                     {
                         MasterAWB = reader["MasterAWB"]?.ToString(),
-                        Jumlah = reader["Jumlah"] != DBNull.Value ? Convert.ToInt32(reader["Jumlah"]) : null,
-                        Bruto = reader["Bruto"] != DBNull.Value ? Convert.ToInt32(reader["Bruto"]) : null,
-                        ChargeBruto = reader["ChargeBruto"] != DBNull.Value ? Convert.ToInt32(reader["ChargeBruto"]) : null
+                        Jumlah = reader["Jumlah"] != DBNull.Value ? Convert.ToDecimal(reader["Jumlah"]) : 0m,
+                        Bruto = reader["Bruto"] != DBNull.Value ? Convert.ToDecimal(reader["Bruto"]) : 0m,
+                        ChargeBruto = reader["ChargeBruto"] != DBNull.Value ? Convert.ToDecimal(reader["ChargeBruto"]) : 0m
                     };
                     result.Add(data);
                 }
@@ -149,9 +149,9 @@ namespace ffis_web_api.Controllers
                         MasterAWB = reader["MasterAWB"]?.ToString(),
                         Komoditi = reader["Komoditi"]?.ToString(),
                         HouseBill = reader["HouseBill"]?.ToString(),
-                        Jumlah = reader["Jumlah"] != DBNull.Value ? Convert.ToInt32(reader["Jumlah"]) : null,
-                        Bruto = reader["Bruto"] != DBNull.Value ? Convert.ToInt32(reader["Bruto"]) : null,
-                        ChargeBruto = reader["ChargeBruto"] != DBNull.Value ? Convert.ToInt32(reader["ChargeBruto"]) : null,
+                        Jumlah = reader["Jumlah"] != DBNull.Value ? Convert.ToDecimal(reader["Jumlah"]) : 0m,
+                        Bruto = reader["Bruto"] != DBNull.Value ? Convert.ToDecimal(reader["Bruto"]) : 0m,
+                        ChargeBruto = reader["ChargeBruto"] != DBNull.Value ? Convert.ToDecimal(reader["ChargeBruto"]) : 0m,
                         ConsigneeCode = reader["ConsigneeCode"]?.ToString(),
                         ConsigneeName = reader["ConsigneeName"]?.ToString(),
                         POS = reader["POS"]?.ToString(),
@@ -181,9 +181,9 @@ namespace ffis_web_api.Controllers
             public string? CarrierCode { get; set; }
             public string? MAWBIssuedDate { get; set; }
             public string? FlightVoyage { get; set; }
-            public int? Jumlah { get; set; }
-            public int? Bruto { get; set; }
-            public int? ChargeBruto { get; set; }
+            public decimal? Jumlah { get; set; }
+            public decimal? Bruto { get; set; }
+            public decimal? ChargeBruto { get; set; }
             public string? ConsolATA { get; set; }
             public string? FirstLoad { get; set; }
             public string? LastDisch { get; set; }
@@ -194,9 +194,9 @@ namespace ffis_web_api.Controllers
         public class ResponseDataBongkarKapalpesawat
         {
             public string? MasterAWB { get; set; }
-            public int? Jumlah { get; set; }
-            public int? Bruto { get; set; }
-            public int? ChargeBruto { get; set; }
+            public decimal? Jumlah { get; set; }
+            public decimal? Bruto { get; set; }
+            public decimal? ChargeBruto { get; set; }
         }
 
         public class ResponseDataBarangAsalPLPOBImport
@@ -204,9 +204,9 @@ namespace ffis_web_api.Controllers
             public string? MasterAWB { get; set; }
             public string? Komoditi { get; set; }
             public string? HouseBill { get; set; }
-            public int? Jumlah { get; set; }
-            public int? Bruto { get; set; }
-            public int? ChargeBruto { get; set; }
+            public decimal? Jumlah { get; set; }
+            public decimal? Bruto { get; set; }
+            public decimal? ChargeBruto { get; set; }
             public string? ConsigneeCode { get; set; }
             public string? ConsigneeName { get; set; }
             public string? POS { get; set; }
