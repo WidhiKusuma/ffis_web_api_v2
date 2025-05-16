@@ -64,7 +64,9 @@ namespace ffis_web_api.Controllers
                         FirstLoad = reader["FirstLoad"]?.ToString(),
                         LastDisch = reader["LastDisch"]?.ToString(),
                         BC11No = reader["BC11No"]?.ToString(),
-                        POS = reader["POS"]?.ToString()
+                        POS = reader["POS"]?.ToString(),
+                        ETA = reader["ETA"]?.ToString(),
+                        ETD = reader["ETD"]?.ToString()
                     };
                     return Ok(data);
                 }
@@ -189,6 +191,8 @@ namespace ffis_web_api.Controllers
             public string? LastDisch { get; set; }
             public string? BC11No { get; set; }
             public string? POS { get; set; }
+            public string? ETA { get; set; }
+            public string? ETD { get; set; }
         }
 
         public class ResponseDataBongkarKapalpesawat
