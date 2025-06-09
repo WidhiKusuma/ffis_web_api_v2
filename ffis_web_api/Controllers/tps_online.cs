@@ -32,7 +32,7 @@ namespace ffis_web_api.Controllers
         }
 
         [HttpGet("GetMasterBarang")]
-        public async Task<IActionResult> GetMasterBarangByMAWB([FromQuery] string MAWB)
+        public async Task<IActionResult> GetMasterBarangByMAWB([FromQuery] string MAWB_or_HAWB)
         {
             var sqlDataSource = _configuration.GetConnectionString("FFISDB");
 
@@ -46,7 +46,7 @@ namespace ffis_web_api.Controllers
                     CommandType = CommandType.StoredProcedure
                 };
                 command.Parameters.Add(new SqlParameter("@StatementType", SqlDbType.NVarChar) { Value = "GetMasterBarang" });
-                command.Parameters.Add(new SqlParameter("@MasterAWB", SqlDbType.NVarChar) { Value = MAWB });
+                command.Parameters.Add(new SqlParameter("@MAWB_or_HAWB", SqlDbType.NVarChar) { Value = MAWB_or_HAWB });
 
                 await using var reader = await command.ExecuteReaderAsync();
                 if (await reader.ReadAsync())
@@ -54,6 +54,7 @@ namespace ffis_web_api.Controllers
                     var data = new ResponseDataMasterBarang
                     {
                         MasterAWB = reader["MasterAWB"]?.ToString(),
+                        HouseAWB = reader["HouseAWB"]?.ToString(),
                         CarrierCode = reader["CarrierCode"]?.ToString(),
                         MAWBIssuedDate = reader["MAWBIssuedDate"]?.ToString(),
                         FlightVoyage = reader["FlightVoyage"]?.ToString(),
@@ -66,16 +67,19 @@ namespace ffis_web_api.Controllers
                         BC11No = reader["BC11No"]?.ToString(),
                         POS = reader["POS"]?.ToString(),
                         ETA = reader["ETA"]?.ToString(),
-                        ETD = reader["ETD"]?.ToString()
+                        ETD = reader["ETD"]?.ToString(),
+                        BC11Date = reader["BC11Date"]?.ToString(),
+                        ATA = reader["ATA"]?.ToString(),
+                        ATD = reader["ATD"]?.ToString()
                     };
                     return Ok(data);
                 }
 
-                return NotFound(new { message = "MAWB not found" });
+                return NotFound(new { message = "MAWB/HAWB not found" });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, $"Error fetching data for MAWB {MAWB}");
+                _logger.LogError(ex, $"Error fetching data for MAWB_or_HAWB {MAWB_or_HAWB}");
                 return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Error fetching data", error = ex.Message });
             }
         }
@@ -159,7 +163,11 @@ namespace ffis_web_api.Controllers
                         POS = reader["POS"]?.ToString(),
                         SubPos = reader["SubPos"]?.ToString(),
                         FirstLoad = reader["FirstLoad"]?.ToString(),
-                        LastDisch = reader["LastDisch"]?.ToString()
+                        LastDisch = reader["LastDisch"]?.ToString(),
+                        BC11Date = reader["BC11Date"]?.ToString(),
+                        ETA = reader["ETA"]?.ToString(),
+                        ATA = reader["ATA"]?.ToString(),
+                        ATD = reader["ATD"]?.ToString()
                     };
 
                     result.Add(data);
@@ -180,6 +188,7 @@ namespace ffis_web_api.Controllers
         public class ResponseDataMasterBarang
         {
             public string? MasterAWB { get; set; }
+            public string? HouseAWB { get; set; }
             public string? CarrierCode { get; set; }
             public string? MAWBIssuedDate { get; set; }
             public string? FlightVoyage { get; set; }
@@ -190,9 +199,12 @@ namespace ffis_web_api.Controllers
             public string? FirstLoad { get; set; }
             public string? LastDisch { get; set; }
             public string? BC11No { get; set; }
+            public string? BC11Date { get; set; }
             public string? POS { get; set; }
             public string? ETA { get; set; }
             public string? ETD { get; set; }
+            public string? ATA { get; set; }
+            public string? ATD { get; set; }
         }
 
         public class ResponseDataBongkarKapalpesawat
@@ -217,6 +229,10 @@ namespace ffis_web_api.Controllers
             public string? SubPos { get; set; }
             public string? FirstLoad { get; set; }
             public string? LastDisch { get; set; }
+            public string? BC11Date { get; set; }
+            public string? ETA { get; set; }
+            public string? ATA { get; set; }
+            public string? ATD { get; set; }
         }
     }
 }

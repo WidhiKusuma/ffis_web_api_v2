@@ -1,28 +1,28 @@
 ﻿using System.Data;
+using System.Data.SqlClient;
 using ffis_web_api.Models;
 
 namespace ffis_web_api.Repositories
 {
     public class UserRepository
     {
-        private readonly IDbConnection _dbConnection;
+        private readonly string _connectionString;
 
-        public UserRepository(IDbConnection dbConnection)
+        public UserRepository(IConfiguration configuration)
         {
-            _dbConnection = dbConnection;
+            _connectionString = configuration.GetConnectionString("FFISDB");
         }
 
         public APIUserFFIS GetUserByUsernameAndPassword(string username, string password)
         {
-            // Menggunakan stored procedure untuk mendapatkan pengguna
-            var query = "sp_APIUser_FFIS"; // Nama stored procedure
+            var query = "sp_APIUser_FFIS";
 
-            using (var command = _dbConnection.CreateCommand())
+            using (var connection = new SqlConnection(_connectionString))
+            using (var command = connection.CreateCommand())
             {
                 command.CommandText = query;
                 command.CommandType = CommandType.StoredProcedure;
 
-                // Menambahkan parameter untuk stored procedure
                 var usernameParam = command.CreateParameter();
                 usernameParam.ParameterName = "@Username";
                 usernameParam.Value = username;
@@ -33,10 +33,9 @@ namespace ffis_web_api.Repositories
                 passwordParam.Value = password;
                 command.Parameters.Add(passwordParam);
 
-                _dbConnection.Open();
+                connection.Open();
                 using (var reader = command.ExecuteReader())
                 {
-                    // Jika ada hasil, mengembalikan data pengguna
                     if (reader.Read())
                     {
                         return new APIUserFFIS
@@ -48,7 +47,6 @@ namespace ffis_web_api.Repositories
                         };
                     }
                 }
-                _dbConnection.Close();
             }
 
             return null;
