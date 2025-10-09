@@ -12,6 +12,7 @@ using System.Globalization;
 using System.Linq;
 using System.Runtime.Intrinsics.X86;
 using System.Threading.Tasks;
+using static ffis_web_api.Controllers.tps_online;
 using static Microsoft.EntityFrameworkCore.DbLoggerCategory.Database;
 
 namespace ffis_web_api.Controllers
@@ -32,6 +33,7 @@ namespace ffis_web_api.Controllers
         }
 
         [HttpPost]
+        [Authorize(Roles = "POST-API")]
         public async Task<IActionResult> Post([FromBody] List<ResponseData> responseDataList)
         {
             if (responseDataList == null || !responseDataList.Any())
@@ -179,6 +181,53 @@ namespace ffis_web_api.Controllers
             }
         }
 
+        [HttpGet("CheckCustReff")]
+        [Authorize(Roles = "POST-API")]
+        public async Task<IActionResult> CheckCustReff([FromQuery] string CustReff)
+        {
+            var sqlDataSource = _configuration.GetConnectionString("FFISDB");
+
+            try
+            {
+                await using var connection = new SqlConnection(sqlDataSource);
+                await connection.OpenAsync();
+
+                var command = new SqlCommand("sp_FFIS_API_KO_ResponseReferance", connection)
+                {
+                    CommandType = CommandType.StoredProcedure
+                };
+                command.Parameters.Add(new SqlParameter("@StatementType", SqlDbType.NVarChar) { Value = "CheckShipmentID" });
+                command.Parameters.Add(new SqlParameter("@custReff", SqlDbType.NVarChar) { Value = CustReff });
+
+                await using var reader = await command.ExecuteReaderAsync();
+                if (await reader.ReadAsync())
+                {
+                    var result = reader["CustReffExists"]?.ToString();
+
+                    if (!string.IsNullOrEmpty(result))
+                    {
+                        var data = new ResponseDataCustReff
+                        {
+                            CustReff = result
+                        };
+                        return Ok(data);
+                    }
+                }
+
+                return NotFound(new { message = $"CustReff '{CustReff}' tidak ditemukan" });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error fetching data for CustReff {CustReff}");
+                return StatusCode(StatusCodes.Status500InternalServerError, new
+                {
+                    message = "Error fetching data",
+                    error = ex.Message
+                });
+            }
+        }
+
+
         // Inside the ResponseReferenceController class
         private void LogToFile(string status, string message, string? custReff = null, string? errorDetails = null)
         {
@@ -226,6 +275,11 @@ namespace ffis_web_api.Controllers
         public string? EventDate { get; set; }
 
         public string? Tipe { get; set; }
+    }
+
+    public class ResponseDataCustReff
+    {
+        public string? CustReff { get; set; }
     }
 
 }

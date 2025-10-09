@@ -23,6 +23,7 @@ namespace ffis_web_api.Controllers
         }
 
         [HttpPost("Header")]
+        [Authorize(Roles = "POST-API")]
         public async Task<IActionResult> Post([FromBody] List<ResponseDataCeisaHeader> responseDataListHeader)
         {
             if (responseDataListHeader == null || !responseDataListHeader.Any())
@@ -207,6 +208,7 @@ namespace ffis_web_api.Controllers
         }
 
         [HttpPost("BahanBaku")]
+        [Authorize(Roles = "POST-API")]
         public async Task<IActionResult> PostBahanBaku([FromBody] List<ResponseDataCeisaBahanBaku> responseDataListBahanBaku)
         {
             if (responseDataListBahanBaku == null || !responseDataListBahanBaku.Any())
@@ -329,6 +331,7 @@ namespace ffis_web_api.Controllers
         }
 
         [HttpPost("BahanBakuDokumen")]
+        [Authorize(Roles = "POST-API")]
         public async Task<IActionResult> PostBahanBakuDokumen([FromBody] List<ResponseDataCeisaBahanBakuDokumen> responseDataListBahanBakuDokumen)
         {
             if (responseDataListBahanBakuDokumen == null || !responseDataListBahanBakuDokumen.Any())
@@ -416,6 +419,7 @@ namespace ffis_web_api.Controllers
         }
 
         [HttpPost("BahanBakuTarif")]
+        [Authorize(Roles = "POST-API")]
         public async Task<IActionResult> PostBahanBakuTarif([FromBody] List<ResponseDataCeisaBahanBakuTarif> responseDataListBahanBakuTarif)
         {
             if (responseDataListBahanBakuTarif == null || !responseDataListBahanBakuTarif.Any())
@@ -522,6 +526,7 @@ namespace ffis_web_api.Controllers
         }
 
         [HttpPost("BankDevisa")]
+        [Authorize(Roles = "POST-API")]
         public async Task<IActionResult> PostBankDevisa([FromBody] List<ResponseDataCeisaBankDevisa> responseDataListBankDevisa)
         {
             if (responseDataListBankDevisa == null || !responseDataListBankDevisa.Any())

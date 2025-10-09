@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Authorization;
+﻿using Azure.Core;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
@@ -23,15 +24,23 @@ namespace ffis_web_api.Controllers
     {
         private readonly IConfiguration _configuration;
         private readonly ILogger<tps_online> _logger;
-        private const string LogFilePath = "C:\\LogAPIFFIS\\ApiLogKO.txt";
+        private const string LogFilePath = "C:\\LogAPIFFIS\\ApiLogTPS.txt";
 
         public tps_online(IConfiguration configuration, ILogger<tps_online> logger)
         {
             _configuration = configuration;
             _logger = logger;
+
+            // Cek dan buat folder jika belum ada
+            var logDir = Path.GetDirectoryName(LogFilePath);
+            if (!Directory.Exists(logDir))
+            {
+                Directory.CreateDirectory(logDir);
+            }
         }
 
         [HttpGet("GetMasterBarang")]
+        [Authorize(Roles = "POST-API")]
         public async Task<IActionResult> GetMasterBarangByMAWB([FromQuery] string MAWB_or_HAWB)
         {
             var sqlDataSource = _configuration.GetConnectionString("FFISDB");
@@ -85,6 +94,7 @@ namespace ffis_web_api.Controllers
         }
 
         [HttpGet("GetBarangBongkarKapalpesawat")]
+        [Authorize(Roles = "POST-API")]
         public async Task<IActionResult> GetBarangBongkarKapalpesawatByMAWB([FromQuery] string MAWB)
         {
             var sqlDataSource = _configuration.GetConnectionString("FFISDB");
@@ -129,6 +139,7 @@ namespace ffis_web_api.Controllers
         }
 
         [HttpGet("GetBarangAsalPLPOBImport")]
+        [Authorize(Roles = "POST-API")]
         public async Task<IActionResult> GetBarangAsalPLPOBImportByMAWB([FromQuery] string MAWB)
         {
             var sqlDataSource = _configuration.GetConnectionString("FFISDB");
@@ -167,7 +178,8 @@ namespace ffis_web_api.Controllers
                         BC11Date = reader["BC11Date"]?.ToString(),
                         ETA = reader["ETA"]?.ToString(),
                         ATA = reader["ATA"]?.ToString(),
-                        ATD = reader["ATD"]?.ToString()
+                        ATD = reader["ATD"]?.ToString(),
+                        HouseBLDate = reader["HouseBLDate"]?.ToString()
                     };
 
                     result.Add(data);
@@ -183,6 +195,200 @@ namespace ffis_web_api.Controllers
                 _logger.LogError(ex, $"Error fetching data for MAWB {MAWB}");
                 return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Error fetching data", error = ex.Message });
             }
+        }
+
+        [HttpPost("SavePLPData")]
+        [Authorize(Roles = "POST-API")]
+        public async Task<IActionResult> SavePLPData([FromBody] List<ResponseDataPLP> dataList)
+        {
+            if (dataList == null || !dataList.Any())
+            {
+                return BadRequest(new { message = "Payload list is empty or null." });
+            }
+
+            var connStr = _configuration.GetConnectionString("FFISDB");
+            var resultList = new List<object>();
+
+            foreach (var data in dataList)
+            {
+                if (data == null || string.IsNullOrWhiteSpace(data.MasterAWB))
+                {
+                    LogToFile("ERROR", "Payload or MasterAWB is missing", data?.MasterAWB);
+                    resultList.Add(new
+                    {
+                        MasterAWB = data?.MasterAWB,
+                        status = "failed",
+                        message = "Payload or MasterAWB is missing."
+                    });
+                    continue;
+                }
+
+                if (string.IsNullOrWhiteSpace(data.HouseAWB))
+                {
+                    LogToFile("ERROR", "HouseRef is missing or empty", data.MasterAWB);
+                    resultList.Add(new
+                    {
+                        MasterAWB = data.MasterAWB,
+                        status = "failed",
+                        message = "HouseRef is required."
+                    });
+                    continue;
+                }
+
+                var cleanedMasterAWB = data.MasterAWB.Replace("-", "").Trim();
+
+                try
+                {
+                    await using var conn = new SqlConnection(connStr);
+                    await conn.OpenAsync();
+
+                    using var cmd = new SqlCommand("sp_FFIS_API_TPS_Online_PLP", conn)
+                    {
+                        CommandType = CommandType.StoredProcedure
+                    };
+
+                    cmd.Parameters.AddWithValue("@Flag", "SaveHeader");
+                    cmd.Parameters.AddWithValue("@User", "API-TPS");
+                    cmd.Parameters.AddWithValue("@MAWBNo", cleanedMasterAWB ?? (object)DBNull.Value);
+                    cmd.Parameters.AddWithValue("@HouseRef", data.HouseAWB ?? (object)DBNull.Value);
+                    cmd.Parameters.AddWithValue("@PLPNo", data.PLPNo ?? (object)DBNull.Value);
+                    cmd.Parameters.AddWithValue("@Jumlah", data.Jumlah ?? (object)DBNull.Value);
+                    cmd.Parameters.AddWithValue("@Weight", data.Weight ?? (object)DBNull.Value);
+                    cmd.Parameters.AddWithValue("@BC11No", data.BC11No ?? (object)DBNull.Value);
+                    cmd.Parameters.AddWithValue("@TPSAsal", data.TPSAsal ?? (object)DBNull.Value);
+                    cmd.Parameters.AddWithValue("@NoBatalPLP", data.NoBatalPLP ?? (object)DBNull.Value);
+                    cmd.Parameters.AddWithValue("@POS", data.POS ?? (object)DBNull.Value);
+
+                    var PLPDate = string.IsNullOrWhiteSpace(data.PLPDate) ? (DateTime?)null : ParseDateTimeIfValid(data.PLPDate, "PLPDate", cleanedMasterAWB);
+                    var TglBC11 = string.IsNullOrWhiteSpace(data.TglBC11) ? (DateTime?)null : ParseDateTimeIfValid(data.TglBC11, "TglBC11", cleanedMasterAWB);
+                    var TglBatalPLP = string.IsNullOrWhiteSpace(data.TglBatalPLP) ? (DateTime?)null : ParseDateTimeIfValid(data.TglBatalPLP, "TglBatalPLP", cleanedMasterAWB);
+                    var TPSGateInDate = string.IsNullOrWhiteSpace(data.TPSGateInDate) ? (DateTime?)null : ParseDateTimeIfValid(data.TPSGateInDate, "TPSGateInDate", cleanedMasterAWB);
+                    var TPSGateOutDate = string.IsNullOrWhiteSpace(data.TPSGateOutDate) ? (DateTime?)null : ParseDateTimeIfValid(data.TPSGateOutDate, "TPSGateOutDate", cleanedMasterAWB);
+
+                    if (data.PLPDate != null && PLPDate == null ||
+                        data.TglBC11 != null && TglBC11 == null ||
+                        data.TglBatalPLP != null && TglBatalPLP == null ||
+                        data.TPSGateInDate != null && TPSGateInDate == null ||
+                        data.TPSGateOutDate != null && TPSGateOutDate == null)
+                    {
+                        LogToFile("ERROR", "Invalid date format in one or more fields.", cleanedMasterAWB);
+                        resultList.Add(new
+                        {
+                            MasterAWB = cleanedMasterAWB,
+                            status = "failed",
+                            message = "Invalid date format in one or more fields."
+                        });
+                        continue;
+                    }
+
+                    cmd.Parameters.Add(new SqlParameter("@PLPDate", SqlDbType.DateTime) { Value = PLPDate ?? (object)DBNull.Value });
+                    cmd.Parameters.Add(new SqlParameter("@TglBC11", SqlDbType.DateTime) { Value = TglBC11 ?? (object)DBNull.Value });
+                    cmd.Parameters.Add(new SqlParameter("@TglBatalPLP", SqlDbType.DateTime) { Value = TglBatalPLP ?? (object)DBNull.Value });
+                    cmd.Parameters.Add(new SqlParameter("@TPSGateInDate", SqlDbType.DateTime) { Value = TPSGateInDate ?? (object)DBNull.Value });
+                    cmd.Parameters.Add(new SqlParameter("@TPSGateOutDate", SqlDbType.DateTime) { Value = TPSGateOutDate ?? (object)DBNull.Value });
+
+                    var outputParam = new SqlParameter("@FlagInwardID_Output", SqlDbType.Int)
+                    {
+                        Direction = ParameterDirection.Output
+                    };
+                    cmd.Parameters.Add(outputParam);
+
+                    await cmd.ExecuteNonQueryAsync();
+
+                    int flag = (int)(outputParam.Value ?? 0);
+                    string resultMsg = flag switch
+                    {
+                        1 => "PLP created successfully",
+                        2 => "PLP updated successfully",
+                        _ => "No operation performed"
+                    };
+
+                    if (flag == 0)
+                    {
+                        LogToFile("ERROR", "Stored procedure did not perform insert or update", cleanedMasterAWB);
+                        resultList.Add(new
+                        {
+                            MasterAWB = cleanedMasterAWB,
+                            status = "failed",
+                            message = "No operation performed by the database."
+                        });
+                        continue;
+                    }
+
+                    LogToFile("SUCCESS", resultMsg, cleanedMasterAWB);
+
+                    resultList.Add(new
+                    {
+                        MasterAWB = cleanedMasterAWB,
+                        status = "success",
+                        message = resultMsg,
+                        code = flag
+                    });
+                }
+                catch (Exception ex)
+                {
+                    LogToFile("ERROR", "Exception during SavePLPData", cleanedMasterAWB, ex.ToString());
+                    _logger.LogError(ex, "Error in SavePLPData for MAWB {mawb}", cleanedMasterAWB);
+
+                    resultList.Add(new
+                    {
+                        MasterAWB = cleanedMasterAWB,
+                        status = "failed",
+                        message = "Internal error during PLP data save",
+                        error = ex.Message
+                    });
+                }
+            }
+
+            // Final summary
+            int successCount = resultList.Count(r => r.ToString().Contains("status = success"));
+            int failedCount = resultList.Count(r => r.ToString().Contains("status = failed"));
+            LogToFile("INFO", $"SavePLPData Summary: Total input = {dataList.Count}, Success = {successCount}, Failed = {failedCount}");
+
+            return Ok(resultList);
+        }
+
+
+        private void LogToFile(string status, string message, string? mawb = null, string? errorDetails = null)
+        {
+            try
+            {
+                var logTime = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+                var statusPadded = status?.PadRight(7) ?? "INFO   ";
+                var mawbDisplay = string.IsNullOrWhiteSpace(mawb) ? "-" : mawb;
+
+                var logMessage = $"{logTime} [{statusPadded}] MAWB: {mawbDisplay} - {message}";
+                if (!string.IsNullOrWhiteSpace(errorDetails))
+                {
+                    logMessage += $" | Details: {errorDetails}";
+                }
+
+                System.IO.File.AppendAllText(LogFilePath, logMessage + Environment.NewLine);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to write log to file.");
+            }
+        }
+
+        private DateTime? ParseDateTimeIfValid(string? dateTimeString, string paramName, string? mawb = null)
+        {
+            var formats = new[] { "yyyyMMddHHmmss", "yyyyMMdd" };
+
+            foreach (var format in formats)
+            {
+                if (!string.IsNullOrWhiteSpace(dateTimeString) &&
+                    dateTimeString.Length == format.Length &&
+                    DateTime.TryParseExact(dateTimeString, format, null, DateTimeStyles.None, out var result))
+                {
+                    return result;
+                }
+            }
+
+            var warning = $"Invalid date format for [{paramName}]: value = '{dateTimeString}'";
+            _logger.LogWarning("{Message} | MAWB: {MAWB}", warning, mawb);
+            LogToFile("ERROR", warning, mawb);
+            return null;
         }
 
         public class ResponseDataMasterBarang
@@ -233,6 +439,25 @@ namespace ffis_web_api.Controllers
             public string? ETA { get; set; }
             public string? ATA { get; set; }
             public string? ATD { get; set; }
+            public string? HouseBLDate { get; set; }
+        }
+
+        public class ResponseDataPLP
+        {
+            public string MasterAWB { get; set; }
+            public string? HouseAWB { get; set; }
+            public string? PLPNo { get; set; }
+            public string? PLPDate { get; set; }
+            public int? Jumlah { get; set; }
+            public float? Weight { get; set; }
+            public string? BC11No { get; set; }
+            public string? TglBC11 { get; set; }
+            public string? TPSAsal { get; set; }
+            public string? NoBatalPLP { get; set; }
+            public string? TglBatalPLP { get; set; }
+            public string? POS { get; set; }
+            public string? TPSGateInDate { get; set; }
+            public string? TPSGateOutDate { get; set; }
         }
     }
 }
