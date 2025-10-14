@@ -76,7 +76,14 @@ namespace ffis_web_api.Controllers
                     checkCustReffCommand.Parameters.Add(new SqlParameter("@CustReff", SqlDbType.NVarChar) { Value = responseData.CustReff });
 
                     var result = await checkCustReffCommand.ExecuteScalarAsync();
-                    if (result == null || (int)result == 0)
+
+                    int existsFlag = 0;
+                    if (result != null && result != DBNull.Value)
+                    {
+                        existsFlag = Convert.ToInt32(result);
+                    }
+
+                    if (existsFlag == 0)
                     {
                         LogToFile("NOT_FOUND", "CustReff not found", responseData.CustReff);
                         failedRecords.Add(responseData);
