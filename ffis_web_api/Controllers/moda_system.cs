@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Authorization;
+﻿using Azure.Core;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using System.Data;
@@ -16,6 +17,7 @@ namespace ffis_web_api.Controllers
         private readonly IConfiguration _configuration;
         private readonly ILogger<moda_system> _logger;
         private const string LogFilePath = "C:\\LogAPIFFIS\\ApiLogModa.txt";
+        private const string LogFilePath2 = "C:\\LogAPIFFIS\\LogAPIModa\\";
 
         public moda_system(IConfiguration configuration, ILogger<moda_system> logger)
         {
@@ -41,7 +43,10 @@ namespace ffis_web_api.Controllers
             var sqlDataSource = _configuration.GetConnectionString("FFISDB");
 
             // ✅ Log awal saat request diterima
-            LogToFileRetrive("REQUEST", "Incoming request received.", CustomerName_OR_CustomerCode, $"PageNumber: {PageNumber}, PageSize: {PageSize}");
+            //LogToFileRetrive("REQUEST", "Incoming request received.", CustomerName_OR_CustomerCode, $"PageNumber: {PageNumber}, PageSize: {PageSize}");
+
+            // 🔥 Log REQUEST BODY
+            LogEndpoint("GetDataBookingByCustomer_AFF", "REQUEST", "Incoming request received.", CustomerName_OR_CustomerCode, $"PageNumber: {PageNumber}, PageSize: {PageSize}");
 
             try
             {
@@ -98,17 +103,24 @@ namespace ffis_web_api.Controllers
 
                 if (result.Any())
                 {
-                    LogToFileRetrive("SUCCESS", "Successfully retrieved booking data.", CustomerName_OR_CustomerCode, $"Page: {PageNumber}, PageSize: {PageSize}, Records: {result.Count}");
+                    //LogToFileRetrive("SUCCESS", "Successfully retrieved booking data.", CustomerName_OR_CustomerCode, $"Page: {PageNumber}, PageSize: {PageSize}, Records: {result.Count}");
+
+                    // 🔥 Log DETAIL success
+                    LogEndpoint("GetDataBookingByCustomer_AFF", "DETAIL_SUCCESS_RETRIEVED", CustomerName_OR_CustomerCode, $"Page: {PageNumber}, PageSize: {PageSize}, Records: {result.Count}");
                     return Ok(result);
                 }
 
-                LogToFileRetrive("INFO", "No booking data found for given customer.", CustomerName_OR_CustomerCode);
+               // LogToFileRetrive("INFO", "No booking data found for given customer.", CustomerName_OR_CustomerCode);
+
+                // 🔥 Log DETAIL failed
+                LogEndpoint("GetDataBookingByCustomer_AFF", "DETAIL_FAILED", "No booking data found for given customer.", CustomerName_OR_CustomerCode);
                 return NotFound(new { message = "CustomerName or CustomerCode not found" });
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, $"Error fetching data for CustomerName or CustomerCode : {CustomerName_OR_CustomerCode}");
-                LogToFileRetrive("ERROR", "Exception occurred while fetching data.", CustomerName_OR_CustomerCode, ex.ToString());
+                //LogToFileRetrive("ERROR", "Exception occurred while fetching data.", CustomerName_OR_CustomerCode, ex.ToString());
+                LogEndpoint("GetDataBookingByCustomer_AFF", "ERROR", "Exception occurred while fetching data.", CustomerName_OR_CustomerCode, ex.ToString());
                 return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Error fetching data", error = ex.Message });
             }
         }
@@ -124,6 +136,9 @@ namespace ffis_web_api.Controllers
             {
                 return BadRequest(new { message = "Payload cannot be empty." });
             }
+
+            // 🔥 Log REQUEST BODY
+            LogEndpoint("CreateDataTruckingAFF", "REQUEST", "-", "Incoming request body", request);
 
             var connStr = _configuration.GetConnectionString("FFISDB");
             var success = new List<ResponseCreateDataTruckingAFF>();
@@ -244,11 +259,19 @@ namespace ffis_web_api.Controllers
                         }
 
                         success.Add(item);
+
+                        // 🔥 Log DETAIL success
+                        LogEndpoint("CreateDataTruckingAFF", "DETAIL_SUCCESS", item.NoJobOrNoDO, "Detail processed successfully", item);
+
                     }
                     catch (Exception exItem)
                     {
                         failed.Add((item, exItem.Message));
-                        LogToFile("ERROR", "Exception occurred in detail", item.NoJobOrNoDO, exItem.ToString());
+
+                        // 🔥 Log DETAIL failed
+                        LogEndpoint("CreateDataTruckingAFF", "DETAIL_FAILED", item.NoJobOrNoDO, exItem.ToString(), item);
+
+                       // LogToFile("ERROR", "Exception occurred in detail", item.NoJobOrNoDO, exItem.ToString());
                     }
                 }
 
@@ -256,19 +279,28 @@ namespace ffis_web_api.Controllers
                 if (!failed.Any())
                 {
                     tx.Commit();
-                    LogToFile("SUCCESS", "Successfully submitted header and all details.", success.FirstOrDefault()?.NoJobOrNoDO ?? "-", $"TrafficHeaderID: {headerId}");
-                    return Ok(new
+
+                    var responseObj = new
                     {
                         message = "Header and all details inserted successfully.",
                         header = success.FirstOrDefault()?.NoJobOrNoDO ?? "-",
                         TrafficHeaderID = headerId,
                         detailSuccessCount = success.Count
+                    };
+
+                    LogEndpoint("CreateDataTruckingAFF", "RESPONSE_SUCCESS", "-", "Response OK", new
+                    {
+                        message = "Header and all details inserted successfully.",
+                        TrafficHeaderID = headerId,
+                        detailSuccessCount = success.Count
                     });
+
+                    return Ok(responseObj);
                 }
                 else
                 {
                     tx.Rollback();
-                    return BadRequest(new
+                    var responseObj = new
                     {
                         message = "Some details failed. Transaction rolled back.",
                         header = failed.FirstOrDefault().record.NoJobOrNoDO ?? "-",
@@ -280,21 +312,30 @@ namespace ffis_web_api.Controllers
                             NoJobOrNoDO = x.record.NoJobOrNoDO,
                             ErrorMessage = x.error
                         })
-                    });
+                    };
+
+                    // 🔥 Log RESPONSE failed
+                    LogEndpoint("CreateDataTruckingAFF", "RESPONSE_ROLLBACK", "-", "Some details failed, rollback executed", failed);
+
+                    return BadRequest(responseObj);
                 }
             }
             catch (Exception ex)
             {
                 tx.Rollback();
                 var fallbackNoJobOrNoDO = success.FirstOrDefault()?.NoJobOrNoDO ?? failed.FirstOrDefault().record.NoJobOrNoDO ?? "-";
-                LogToFile("ERROR", "Exception occurred when saving header.", fallbackNoJobOrNoDO, ex.ToString());
 
-                return StatusCode(StatusCodes.Status500InternalServerError, new
+                var responseObj = new
                 {
                     message = "Internal server error. Transaction rolled back.",
                     error = ex.Message,
                     header = fallbackNoJobOrNoDO
-                });
+                };
+
+                // 🔥 Log RESPONSE exception
+                LogEndpoint("CreateDataTruckingAFF", "RESPONSE_ERROR", "-", ex.ToString(), request);
+
+                return StatusCode(StatusCodes.Status500InternalServerError, responseObj);
             }
         }
 
@@ -306,18 +347,18 @@ namespace ffis_web_api.Controllers
             });
         }
 
-        private void LogToFile(string status, string message, string? no_Job_or_no_DO = null, string? errorDetails = null)
-        {
-            try
-            {
-                var logMessage = $"{DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} [{status}] No.Job/No.DO: {no_Job_or_no_DO ?? "-"} - {message} {errorDetails ?? ""}";
-                System.IO.File.AppendAllText(LogFilePath, logMessage + Environment.NewLine); // Use System.IO.File
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to write log to file.");
-            }
-        }
+        //private void LogToFile(string status, string message, string? no_Job_or_no_DO = null, string? errorDetails = null)
+        //{
+        //    try
+        //    {
+        //        var logMessage = $"{DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} [{status}] No.Job/No.DO: {no_Job_or_no_DO ?? "-"} - {message} {errorDetails ?? ""}";
+        //        System.IO.File.AppendAllText(LogFilePath, logMessage + Environment.NewLine); // Use System.IO.File
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        _logger.LogError(ex, "Failed to write log to file.");
+        //    }
+        //}
 
         private void LogToFileRetrive(string status, string message, string? CustomerName_OR_CustomerCode = null, string? errorDetails = null)
         {
@@ -344,6 +385,155 @@ namespace ffis_web_api.Controllers
             return null;
         }
         #endregion
+
+        #region API_DeleteAllTraffic
+        [HttpDelete("DeleteAllTraffic")]
+        [Authorize(Roles = "MODA-API")]
+        public async Task<IActionResult> DeleteAllTraffic(
+        [FromQuery] string OidTrafficHeader,
+        [FromQuery] string OidCS)
+        {
+            var connStr = _configuration.GetConnectionString("FFISDB");
+
+            try
+            {
+                using var conn = new SqlConnection(connStr);
+                await conn.OpenAsync();
+
+                using var cmd = new SqlCommand("sp_FFIS_API_Moda", conn)
+                {
+                    CommandType = CommandType.StoredProcedure
+                };
+
+                AddSqlParameter(cmd, "@StatementType", SqlDbType.NVarChar, "DeleteAllTraffic");
+                AddSqlParameter(cmd, "@OidTrafficHeader", SqlDbType.NVarChar, OidTrafficHeader);
+                AddSqlParameter(cmd, "@ShipmentMonitoringCs", SqlDbType.NVarChar, OidCS);
+
+                await cmd.ExecuteNonQueryAsync();
+
+                //LogToFile("SUCCESS", "DeleteAllTraffic executed successfully", OidTrafficHeader);
+                LogEndpoint("DeleteAllTraffic", "DETAIL_SUCCESS", OidTrafficHeader, "DeleteAllTraffic executed successfully", OidTrafficHeader);
+
+                return Ok(new
+                {
+                    message = "All traffic data deleted successfully.",
+                    OidTrafficHeader
+                });
+            }
+            catch (Exception ex)
+            {
+                //LogToFile("ERROR", "DeleteAllTraffic failed", OidTrafficHeader, ex.ToString());
+                LogEndpoint("DeleteAllTraffic", "DETAIL_FAILED", OidTrafficHeader, ex.ToString(), OidTrafficHeader);
+
+
+                return StatusCode(StatusCodes.Status500InternalServerError, new
+                {
+                    message = "Error deleting traffic data",
+                    error = ex.Message
+                });
+            }
+        }
+
+        #endregion
+
+        #region ViewerLog
+        [HttpGet("view-log-html")]
+        public IActionResult ViewLogHtml([FromQuery] string endpoint, [FromQuery] string? date = null)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(endpoint))
+                    return Content("<h3>Parameter 'endpoint' wajib.</h3>", "text/html");
+
+                //string basePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "LogEndpoint");
+                string basePath = Path.GetDirectoryName(LogFilePath2);
+                string tanggal = string.IsNullOrEmpty(date)
+                    ? DateTime.Now.ToString("yyyyMMdd")
+                    : date;
+
+                string filePath = Path.Combine(basePath, $"{endpoint}_{tanggal}.log");
+
+                if (!System.IO.File.Exists(filePath))
+                    return Content($"<h3>Log file tidak ditemukan: {endpoint}_{tanggal}.log</h3>", "text/html");
+
+                string content = System.IO.File.ReadAllText(filePath);
+
+                string html = $@"
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Log Viewer - {endpoint}</title>
+    <link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css'>
+    <style>
+        body {{ background:#f7f7f7; }}
+        .log-container {{
+            background:white;
+            padding:20px;
+            border-radius:10px;
+            box-shadow:0 0 10px rgba(0,0,0,0.1);
+            white-space: pre-wrap;
+            font-family: Consolas, monospace;
+            font-size:14px;
+        }}
+    </style>
+</head>
+<body>
+
+<div class='container mt-4'>
+    <h2>Viewer Log: <span class='text-primary'>{endpoint}</span></h2>
+    <p>Tanggal: {tanggal}</p>
+    <hr>
+
+    <div class='log-container'>
+{System.Net.WebUtility.HtmlEncode(content)}
+    </div>
+
+    <a href='/api/moda_system/view-log-html?endpoint={endpoint}&date={tanggal}' class='btn btn-primary mt-3'>Refresh</a>
+</div>
+
+</body>
+</html>";
+
+                return Content(html, "text/html");
+            }
+            catch (Exception ex)
+            {
+                return Content($"<h3>Error: {ex.Message}</h3>", "text/html");
+            }
+        }
+
+
+        #endregion
+
+        private void LogEndpoint(string endpoint, string type, string noJob, string message, object data = null)
+        {
+            try
+            {
+                string basePath = Path.GetDirectoryName(LogFilePath2);
+                if (!Directory.Exists(basePath))
+                    Directory.CreateDirectory(basePath);
+
+                string fileName = $"{endpoint}_{DateTime.Now:yyyyMMdd}.log";
+                string filePath = Path.Combine(basePath, fileName);
+
+                var logObject = new
+                {
+                    Timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
+                    Level = type,
+                    NoJob = noJob,
+                    Message = message,
+                    Data = data
+                };
+
+                string json = System.Text.Json.JsonSerializer.Serialize(logObject, new System.Text.Json.JsonSerializerOptions
+                {
+                    WriteIndented = true
+                });
+
+                System.IO.File.AppendAllText(filePath, json + Environment.NewLine + "----" + Environment.NewLine);
+            }
+            catch { }
+        }
 
         public class ResponseDataAFFListBooking
         {
