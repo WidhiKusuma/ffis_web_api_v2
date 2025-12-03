@@ -17,7 +17,7 @@ namespace ffis_web_api.Controllers
         private readonly IConfiguration _configuration;
         private readonly ILogger<moda_system> _logger;
         private const string LogFilePath = "C:\\LogAPIFFIS\\ApiLogModa.txt";
-        private const string LogFilePath2 = "C:\\LogAPIFFIS\\LogAPIModa\\";
+        private const string LogFilePath2 = "C:\\LogAPIFFIS\\LogAPIModaTest\\";
 
         public moda_system(IConfiguration configuration, ILogger<moda_system> logger)
         {
@@ -323,7 +323,37 @@ namespace ffis_web_api.Controllers
             catch (Exception ex)
             {
                 tx.Rollback();
-                var fallbackNoJobOrNoDO = success.FirstOrDefault()?.NoJobOrNoDO ?? failed.FirstOrDefault().record.NoJobOrNoDO ?? "-";
+
+                // =============== SAFE FALLBACK (Tidak NPE lagi) ==================
+                var firstSuccess = success.FirstOrDefault();
+                var firstFailed = failed.FirstOrDefault();
+
+                string fallbackNoJobOrNoDO =
+                firstSuccess?.NoJobOrNoDO
+                ?? (firstFailed.record != null ? firstFailed.record.NoJobOrNoDO : null)
+                ?? "-";
+
+
+
+                // ================= LOGGING ERROR DETAIL ==========================
+                LogEndpoint(
+                    "CreateDataTruckingAFF",
+                    "RESPONSE_ERROR",
+                    fallbackNoJobOrNoDO,
+                    $"Exception caught in main try-catch.\nMessage: {ex.Message}\nStackTrace: {ex.StackTrace}",
+                    new
+                    {
+                        request,
+                        fallbackNoJobOrNoDO,
+                        successCount = success.Count,
+                        failedCount = failed.Count,
+                        failedItems = failed.Select(f => new
+                        {
+                            NoJobOrNoDO = f.record?.NoJobOrNoDO,
+                            ErrorMessage = f.error
+                        })
+                    }
+                );
 
                 var responseObj = new
                 {
@@ -332,11 +362,9 @@ namespace ffis_web_api.Controllers
                     header = fallbackNoJobOrNoDO
                 };
 
-                // 🔥 Log RESPONSE exception
-                LogEndpoint("CreateDataTruckingAFF", "RESPONSE_ERROR", "-", ex.ToString(), request);
-
                 return StatusCode(StatusCodes.Status500InternalServerError, responseObj);
             }
+
         }
 
         private void AddSqlParameter(SqlCommand cmd, string name, SqlDbType type, object? value)
@@ -390,9 +418,31 @@ namespace ffis_web_api.Controllers
         [HttpDelete("DeleteAllTraffic")]
         [Authorize(Roles = "MODA-API")]
         public async Task<IActionResult> DeleteAllTraffic(
-        [FromQuery] string OidTrafficHeader,
-        [FromQuery] string OidCS)
+            [FromQuery] string OidTrafficHeader,
+            [FromQuery] string OidCS)   // <— sekarang satu string comma-separated
         {
+            if (string.IsNullOrWhiteSpace(OidTrafficHeader))
+            {
+                return BadRequest(new { message = "OidTrafficHeader is required." });
+            }
+
+            if (string.IsNullOrWhiteSpace(OidCS))
+            {
+                return BadRequest(new { message = "OidCS must not be empty." });
+            }
+
+            // 🔥 Split comma-separated values menjadi List<string>
+            var listCS = OidCS
+                .Split(',', StringSplitOptions.RemoveEmptyEntries)
+                .Select(x => x.Trim())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .ToList();
+
+            if (listCS.Count == 0)
+            {
+                return BadRequest(new { message = "OidCS is invalid or empty after parsing." });
+            }
+
             var connStr = _configuration.GetConnectionString("FFISDB");
 
             try
@@ -400,31 +450,36 @@ namespace ffis_web_api.Controllers
                 using var conn = new SqlConnection(connStr);
                 await conn.OpenAsync();
 
-                using var cmd = new SqlCommand("sp_FFIS_API_Moda", conn)
+                foreach (var cs in listCS)
                 {
-                    CommandType = CommandType.StoredProcedure
-                };
+                    using var cmd = new SqlCommand("sp_FFIS_API_Moda", conn)
+                    {
+                        CommandType = CommandType.StoredProcedure
+                    };
 
-                AddSqlParameter(cmd, "@StatementType", SqlDbType.NVarChar, "DeleteAllTraffic");
-                AddSqlParameter(cmd, "@OidTrafficHeader", SqlDbType.NVarChar, OidTrafficHeader);
-                AddSqlParameter(cmd, "@ShipmentMonitoringCs", SqlDbType.NVarChar, OidCS);
+                    AddSqlParameter(cmd, "@StatementType", SqlDbType.NVarChar, "DeleteAllTraffic");
+                    AddSqlParameter(cmd, "@OidTrafficHeader", SqlDbType.NVarChar, OidTrafficHeader);
+                    AddSqlParameter(cmd, "@ShipmentMonitoringCs", SqlDbType.NVarChar, cs);
 
-                await cmd.ExecuteNonQueryAsync();
+                    await cmd.ExecuteNonQueryAsync();
 
-                //LogToFile("SUCCESS", "DeleteAllTraffic executed successfully", OidTrafficHeader);
-                LogEndpoint("DeleteAllTraffic", "DETAIL_SUCCESS", OidTrafficHeader, "DeleteAllTraffic executed successfully", OidTrafficHeader);
+                    // Logging per OidCS
+                    LogEndpoint("DeleteAllTraffic", "DETAIL_SUCCESS",
+                        OidTrafficHeader, $"DeleteAllTraffic executed for OidCS={cs}", cs);
+                }
 
                 return Ok(new
                 {
                     message = "All traffic data deleted successfully.",
-                    OidTrafficHeader
+                    OidTrafficHeader,
+                    TotalProcessed = listCS.Count,
+                    OidCS = listCS
                 });
             }
             catch (Exception ex)
             {
-                //LogToFile("ERROR", "DeleteAllTraffic failed", OidTrafficHeader, ex.ToString());
-                LogEndpoint("DeleteAllTraffic", "DETAIL_FAILED", OidTrafficHeader, ex.ToString(), OidTrafficHeader);
-
+                LogEndpoint("DeleteAllTraffic", "DETAIL_FAILED",
+                    OidTrafficHeader, ex.ToString(), OidTrafficHeader);
 
                 return StatusCode(StatusCodes.Status500InternalServerError, new
                 {
@@ -433,7 +488,6 @@ namespace ffis_web_api.Controllers
                 });
             }
         }
-
         #endregion
 
         #region ViewerLog
