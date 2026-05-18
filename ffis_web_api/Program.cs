@@ -7,8 +7,26 @@ using ffis_web_api.Repositories;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Menambahkan UserRepository ke DI container
+// Menambahkan Repository ke DI container
 builder.Services.AddScoped<UserRepository>();
+builder.Services.AddScoped<ITStockRepository>();
+builder.Services.AddScoped<DriverRepository>();
+
+// Initialize Firebase Admin
+var fcmKeyPath = Path.Combine(builder.Environment.ContentRootPath, "fcm_key.json");
+if (File.Exists(fcmKeyPath))
+{
+    FirebaseAdmin.FirebaseApp.Create(new FirebaseAdmin.AppOptions()
+    {
+        Credential = Google.Apis.Auth.OAuth2.GoogleCredential.FromFile(fcmKeyPath)
+    });
+}
+
+builder.Services.AddHttpClient("YLIDClient")
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+    {
+        ServerCertificateCustomValidationCallback = (message, cert, chain, errors) => true
+    });
 
 // Tambahkan koneksi database
 builder.Services.AddScoped<IDbConnection>(sp =>

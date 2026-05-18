@@ -22,9 +22,10 @@ namespace ffis_web_api.Controllers
         }
 
         [HttpPost("login")]
-        public IActionResult Login([FromBody] APIUserFFIS user)
+        public IActionResult Login([FromBody] LoginRequestDTO loginRequest)
         {
-            var existingUser = _userRepository.GetUserByUsernameAndPassword(user.Username, user.Password);
+            // Akses properti menggunakan loginRequest.Username dan loginRequest.Password
+            var existingUser = _userRepository.GetUserByUsernameAndPassword(loginRequest.Username, loginRequest.Password);
 
             if (existingUser == null)
             {
@@ -32,17 +33,32 @@ namespace ffis_web_api.Controllers
             }
 
             var token = GenerateJwtToken(existingUser);
-            return Ok(new { Token = token });
+            // Mengembalikan JWT dan data pengguna yang relevan
+            return Ok(new
+            {
+                Token = token,
+                Username = existingUser.Username,
+                FullName = existingUser.fullname,
+                NIK = existingUser.nik,
+                Email = existingUser.email
+                // Anda dapat menambahkan data lain yang dikembalikan oleh SP di sini
+            });
         }
 
         private string GenerateJwtToken(APIUserFFIS user)
         {
-            var claims = new[]
+            // Menggunakan data pengguna yang lengkap dari SP untuk claims
+            var claims = new List<Claim>
             {
-            new Claim(JwtRegisteredClaimNames.Sub, user.Username),
-            new Claim(ClaimTypes.Role, user.Role),
-            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
-        };
+                new Claim(JwtRegisteredClaimNames.Sub, user.Username),
+                new Claim(ClaimTypes.Name, user.fullname), // Nama lengkap
+                new Claim(ClaimTypes.Role, user.Role), // Role
+                new Claim("nik", user.nik ?? ""), // NIK sebagai custom claim
+                new Claim("location", user.Location ?? ""), // Lokasi sebagai custom claim
+                new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+            };
+
+            // Tambahkan claim lainnya jika diperlukan (Position, Section, Division, dll.)
 
             var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["Jwt:Key"]));
             var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
