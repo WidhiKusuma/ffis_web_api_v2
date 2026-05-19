@@ -361,3 +361,6 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+
+# Secrets - never commit, load from env/user-secrets or a local untracked copy
+ffis_web_api/fcm_key.json
