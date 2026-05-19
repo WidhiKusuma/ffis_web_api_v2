@@ -558,7 +558,7 @@ namespace ffis_web_api.Repositories
             {
                 var sql = @"SELECT TOP 1 * FROM P2HHeader 
                             WHERE VehicleNo = @VehicleNo 
-                            AND (Status = 'Gate Out' OR (ExitTime IS NOT NULL AND GateInTime IS NULL))
+                            AND (Status = 'Approved' OR Status = 'Gate Out' OR (ExitTime IS NOT NULL AND GateInTime IS NULL))
                             ORDER BY StartTime DESC";
                 return db.QueryFirstOrDefault<P2HHeader>(sql, new { VehicleNo = vehicleNo });
             }

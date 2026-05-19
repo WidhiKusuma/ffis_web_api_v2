@@ -97,7 +97,8 @@ namespace ffis_web_api.Controllers
                         IsActive = true, 
                         TransactionNo = active.TransactionNo, 
                         ExitTime = active.ExitTime,
-                        DriverName = active.DriverName 
+                        DriverName = active.DriverName,
+                        Status = active.Status
                     });
                 }
 
