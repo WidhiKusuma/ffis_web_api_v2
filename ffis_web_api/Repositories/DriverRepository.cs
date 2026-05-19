@@ -552,6 +552,18 @@ namespace ffis_web_api.Repositories
             }
         }
 
+        public P2HHeader? GetActiveChecklistByVehicle(string vehicleNo)
+        {
+            using (var db = new SqlConnection(_connectionString))
+            {
+                var sql = @"SELECT TOP 1 * FROM P2HHeader 
+                            WHERE VehicleNo = @VehicleNo 
+                            AND (Status = 'Gate Out' OR (ExitTime IS NOT NULL AND GateInTime IS NULL))
+                            ORDER BY StartTime DESC";
+                return db.QueryFirstOrDefault<P2HHeader>(sql, new { VehicleNo = vehicleNo });
+            }
+        }
+
         public bool UpdateGateIn(string transactionNo, int odometer, string actionBy)
         {
             using (var db = new SqlConnection(_connectionString))

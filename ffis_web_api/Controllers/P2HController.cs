@@ -82,6 +82,33 @@ namespace ffis_web_api.Controllers
             }
         }
 
+        [HttpGet("check-active/{vehicleNo}")]
+        public IActionResult CheckActiveChecklist(string vehicleNo)
+        {
+            try
+            {
+                var vehicle = Uri.UnescapeDataString(vehicleNo).Trim().ToUpper();
+                var active = _driverRepository.GetActiveChecklistByVehicle(vehicle);
+
+                if (active != null)
+                {
+                    return Ok(new 
+                    { 
+                        IsActive = true, 
+                        TransactionNo = active.TransactionNo, 
+                        ExitTime = active.ExitTime,
+                        DriverName = active.DriverName 
+                    });
+                }
+
+                return Ok(new { IsActive = false });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, ex.Message);
+            }
+        }
+
         [HttpGet("get-vehicle-licenses")]
         public async Task<IActionResult> GetVehicleLicenses([FromQuery] string search)
         {
