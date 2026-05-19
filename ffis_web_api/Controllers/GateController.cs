@@ -112,6 +112,34 @@ namespace ffis_web_api.Controllers
                             var message = new FirebaseAdmin.Messaging.Message()
                             {
                                 Token = admin.FcmToken,
+                                Notification = new FirebaseAdmin.Messaging.Notification()
+                                {
+                                    Title = $"Aktivitas Gate: {activityType}",
+                                    Body = $"Unit {header.VehicleNo} ({header.DriverName}) telah melakukan {activityType}."
+                                },
+                                Android = new FirebaseAdmin.Messaging.AndroidConfig()
+                                {
+                                    Priority = FirebaseAdmin.Messaging.Priority.High,
+                                    Notification = new FirebaseAdmin.Messaging.AndroidNotification()
+                                    {
+                                        ChannelId = "p2h_notification_channel",
+                                        Priority = FirebaseAdmin.Messaging.NotificationPriority.HIGH,
+                                        DefaultSound = true,
+                                        DefaultVibrateTimings = true
+                                    }
+                                },
+                                Apns = new FirebaseAdmin.Messaging.ApnsConfig()
+                                {
+                                    Headers = new Dictionary<string, string>()
+                                    {
+                                        { "apns-priority", "10" }
+                                    },
+                                    Aps = new FirebaseAdmin.Messaging.Aps()
+                                    {
+                                        Sound = "default",
+                                        Badge = 1
+                                    }
+                                },
                                 Data = new Dictionary<string, string>()
                                 {
                                     { "title", $"Aktivitas Gate: {activityType}" },
