@@ -827,9 +827,10 @@ namespace ffis_web_api.Repositories
             using (var db = new SqlConnection(_connectionString))
             {
                 var sql = @"SELECT * FROM P2HNotification 
-                            WHERE Nik = @Nik 
+                            WHERE (Nik = @Nik 
                                OR Nik = (SELECT TOP 1 Username FROM UserP2H WHERE DriverCode = @Nik)
-                               OR Nik = (SELECT TOP 1 DriverCode FROM UserP2H WHERE Username = @Nik)
+                               OR Nik = (SELECT TOP 1 DriverCode FROM UserP2H WHERE Username = @Nik))
+                               AND ReceivedAt >= DATEADD(day, -7, GETDATE())
                             ORDER BY ReceivedAt DESC";
                 return db.Query<P2HNotification>(sql, new { Nik = nik }).ToList();
             }
