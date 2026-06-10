@@ -105,12 +105,29 @@ namespace ffis_web_api.Controllers
         }
         
         [Authorize]
+        [HttpGet("users")]
+        public IActionResult GetAllUsers()
+        {
+            var users = _driverRepository.GetAllUsers();
+            var result = users.Select(u => new
+            {
+                nik = u.DriverCode,
+                username = u.Username,
+                fullName = u.FullName,
+                level = u.LevelUser,
+                createdAt = u.CreatedAt,
+                isActive = u.IsActive
+            });
+            return Ok(result);
+        }
+
+        [Authorize]
         [HttpPost("reset-password")]
         public IActionResult ResetPassword([FromBody] ResetPasswordRequestDTO request)
         {
             if (string.IsNullOrEmpty(request.Username) || string.IsNullOrEmpty(request.NewPassword))
             {
-                return BadRequest("Username and New Password are required.");
+                return BadRequest("Username/NIK and New Password are required.");
             }
 
             if (_driverRepository.UpdatePassword(request.Username, request.NewPassword))
@@ -118,7 +135,7 @@ namespace ffis_web_api.Controllers
                 return Ok("Password reset successfully.");
             }
 
-            return BadRequest("Failed to reset password. User might not exist.");
+            return BadRequest("Failed to reset password. Username or NIK not found.");
         }
 
         [Authorize]

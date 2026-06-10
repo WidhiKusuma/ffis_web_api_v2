@@ -4,6 +4,7 @@ using Microsoft.Data.SqlClient;
 using Microsoft.IdentityModel.Tokens;
 using System.Data;
 using ffis_web_api.Repositories;
+using Npgsql;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -11,6 +12,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddScoped<UserRepository>();
 builder.Services.AddScoped<ITStockRepository>();
 builder.Services.AddScoped<DriverRepository>();
+builder.Services.AddScoped<ICbmRepository, CbmRepository>();
 
 // Initialize Firebase Admin
 var fcmKeyPath = Path.Combine(builder.Environment.ContentRootPath, "fcm_key.json");
@@ -28,9 +30,13 @@ builder.Services.AddHttpClient("YLIDClient")
         ServerCertificateCustomValidationCallback = (message, cert, chain, errors) => true
     });
 
-// Tambahkan koneksi database
+// Tambahkan koneksi database SQL Server (P2H)
 builder.Services.AddScoped<IDbConnection>(sp =>
     new SqlConnection(builder.Configuration.GetConnectionString("FFISDB")));
+
+// Tambahkan koneksi database Postgres (CBM)
+builder.Services.AddScoped<NpgsqlConnection>(sp =>
+    new NpgsqlConnection(builder.Configuration.GetConnectionString("dbpath")));
 
 // Tambahkan autentikasi JWT
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)

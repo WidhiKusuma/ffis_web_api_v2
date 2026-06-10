@@ -92,13 +92,14 @@ namespace ffis_web_api.Controllers
 
                 if (active != null)
                 {
-                    return Ok(new 
-                    { 
-                        IsActive = true, 
-                        TransactionNo = active.TransactionNo, 
+                    return Ok(new
+                    {
+                        IsActive = true,
+                        TransactionNo = active.TransactionNo,
                         ExitTime = active.ExitTime,
                         DriverName = active.DriverName,
-                        Status = active.Status
+                        Status = active.Status,
+                        ActivityDate = active.ActivityDate
                     });
                 }
 
@@ -157,8 +158,16 @@ namespace ffis_web_api.Controllers
 
                 if (_driverRepository.SaveP2H(header))
                 {
-                    // Trigger Notification to Admin Transport
-                    _ = Task.Run(() => NotifyAdminTransport(header));
+                    if (header.NeedsApproval)
+                    {
+                        // Notifikasi admin transport: ada temuan, perlu persetujuan manual
+                        _ = Task.Run(() => NotifyAdminTransport(header));
+                    }
+                    else
+                    {
+                        // Notifikasi admin transport: checklist lengkap, disetujui otomatis
+                        _ = Task.Run(() => NotifyAdminTransportAutoApproved(header));
+                    }
 
                     return Ok(new { Message = "P2H Submitted Successfully", QrCode = header.QrCodeData, TransactionNo = header.TransactionNo });
                 }
@@ -259,6 +268,211 @@ namespace ffis_web_api.Controllers
             catch (Exception ex)
             {
                 Console.WriteLine($"[FCM_ERROR_OUTER] {ex.Message}");
+            }
+        }
+
+        private async Task NotifyAdminTransportAutoApproved(P2HHeader header)
+        {
+            try
+            {
+                var adminTokens = _driverRepository.GetAdminTransportUsersAndTokens();
+                if (adminTokens == null || !adminTokens.Any()) return;
+
+                var messaging = FirebaseAdmin.Messaging.FirebaseMessaging.DefaultInstance;
+                string title = "P2H Disetujui Otomatis";
+                string body = $"Unit {header.VehicleNo} ({header.DriverName}) checklist lengkap, tidak ada temuan. Disetujui otomatis.";
+
+                foreach (var admin in adminTokens)
+                {
+                    try
+                    {
+                        _driverRepository.SaveNotification(
+                            admin.DriverCode,
+                            title,
+                            body,
+                            null,
+                            header.TransactionNo,
+                            "auto_approved"
+                        );
+                    }
+                    catch (Exception dbEx)
+                    {
+                        Console.WriteLine($"[NotifyAdminAutoApproved] Gagal menyimpan notifikasi ke DB untuk {admin.Username}: {dbEx.Message}");
+                    }
+
+                    if (messaging != null && !string.IsNullOrEmpty(admin.FcmToken))
+                    {
+                        try
+                        {
+                            var message = new FirebaseAdmin.Messaging.Message()
+                            {
+                                Token = admin.FcmToken,
+                                Notification = new FirebaseAdmin.Messaging.Notification()
+                                {
+                                    Title = title,
+                                    Body = body
+                                },
+                                Android = new FirebaseAdmin.Messaging.AndroidConfig()
+                                {
+                                    Priority = FirebaseAdmin.Messaging.Priority.High,
+                                    Notification = new FirebaseAdmin.Messaging.AndroidNotification()
+                                    {
+                                        ChannelId = "p2h_notification_channel",
+                                        Priority = FirebaseAdmin.Messaging.NotificationPriority.HIGH,
+                                        DefaultSound = true,
+                                        DefaultVibrateTimings = true
+                                    }
+                                },
+                                Apns = new FirebaseAdmin.Messaging.ApnsConfig()
+                                {
+                                    Headers = new Dictionary<string, string>()
+                                    {
+                                        { "apns-priority", "10" }
+                                    },
+                                    Aps = new FirebaseAdmin.Messaging.Aps()
+                                    {
+                                        Sound = "default",
+                                        Badge = 1
+                                    }
+                                },
+                                Data = new Dictionary<string, string>()
+                                {
+                                    { "title", title },
+                                    { "body", body },
+                                    { "type", "auto_approved" },
+                                    { "transaction_no", header.TransactionNo ?? "" },
+                                    { "vehicle_no", header.VehicleNo ?? "" },
+                                    { "nik", header.DriverCode ?? "" }
+                                }
+                            };
+
+                            await messaging.SendAsync(message);
+                        }
+                        catch (Exception fcmEx)
+                        {
+                            Console.WriteLine($"[FCM_AUTO_APPROVED_ERROR] Gagal mengirim push ke {admin.Username}: {fcmEx.Message}");
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[FCM_AUTO_APPROVED_OUTER] {ex.Message}");
+            }
+        }
+
+        [HttpPost("cancel")]
+        public IActionResult CancelP2H([FromBody] CancelP2HRequest request)
+        {
+            if (request.Oid == Guid.Empty)
+                return BadRequest("Oid tidak valid.");
+
+            var p2h = _driverRepository.GetP2HWithDetails(request.Oid);
+            if (p2h == null)
+                return NotFound("Data P2H tidak ditemukan.");
+
+            // Hanya driver pemilik atau admin yang bisa membatalkan
+            if (!IsAdminOrGate() && p2h.DriverCode != GetCurrentUserNIK())
+                return Forbid("Anda tidak memiliki akses untuk membatalkan checklist ini.");
+
+            // Hanya bisa dibatalkan jika status Approved dan belum keluar gate
+            if (p2h.Status != "Approved")
+                return BadRequest($"Checklist tidak bisa dibatalkan karena status saat ini adalah '{p2h.Status}'.");
+
+            if (p2h.ExitTime != null)
+                return BadRequest("Checklist tidak bisa dibatalkan karena kendaraan sudah keluar gate.");
+
+            string cancelBy = GetCurrentUserName();
+            string reason = string.IsNullOrWhiteSpace(request.Reason) ? "Dibatalkan oleh driver" : request.Reason;
+
+            if (_driverRepository.MarkAsCancelled(request.Oid, reason, cancelBy))
+            {
+                _ = Task.Run(() => NotifyAdminTransportCancelled(p2h, cancelBy, reason));
+                return Ok(new { success = true, message = "Checklist berhasil dibatalkan." });
+            }
+
+            return StatusCode(500, "Gagal membatalkan checklist.");
+        }
+
+        private async Task NotifyAdminTransportCancelled(P2HHeader header, string cancelBy, string reason)
+        {
+            try
+            {
+                var adminTokens = _driverRepository.GetAdminTransportUsersAndTokens();
+                if (adminTokens == null || !adminTokens.Any()) return;
+
+                var messaging = FirebaseAdmin.Messaging.FirebaseMessaging.DefaultInstance;
+                string title = "Checklist Dibatalkan";
+                string body = $"Unit {header.VehicleNo} ({header.DriverName}) membatalkan checklist yang telah disetujui. Alasan: {reason}";
+
+                foreach (var admin in adminTokens)
+                {
+                    try
+                    {
+                        _driverRepository.SaveNotification(
+                            admin.DriverCode,
+                            title,
+                            body,
+                            null,
+                            header.TransactionNo,
+                            "cancellation_alert"
+                        );
+                    }
+                    catch (Exception dbEx)
+                    {
+                        Console.WriteLine($"[NotifyAdminCancelled] DB error untuk {admin.Username}: {dbEx.Message}");
+                    }
+
+                    if (messaging != null && !string.IsNullOrEmpty(admin.FcmToken))
+                    {
+                        try
+                        {
+                            var message = new FirebaseAdmin.Messaging.Message()
+                            {
+                                Token = admin.FcmToken,
+                                Notification = new FirebaseAdmin.Messaging.Notification()
+                                {
+                                    Title = title,
+                                    Body = body
+                                },
+                                Android = new FirebaseAdmin.Messaging.AndroidConfig()
+                                {
+                                    Priority = FirebaseAdmin.Messaging.Priority.High,
+                                    Notification = new FirebaseAdmin.Messaging.AndroidNotification()
+                                    {
+                                        ChannelId = "p2h_notification_channel",
+                                        Priority = FirebaseAdmin.Messaging.NotificationPriority.HIGH,
+                                        DefaultSound = true,
+                                        DefaultVibrateTimings = true
+                                    }
+                                },
+                                Apns = new FirebaseAdmin.Messaging.ApnsConfig()
+                                {
+                                    Headers = new Dictionary<string, string> { { "apns-priority", "10" } },
+                                    Aps = new FirebaseAdmin.Messaging.Aps() { Sound = "default", Badge = 1 }
+                                },
+                                Data = new Dictionary<string, string>()
+                                {
+                                    { "title", title },
+                                    { "body", body },
+                                    { "type", "cancellation_alert" },
+                                    { "transaction_no", header.TransactionNo ?? "" },
+                                    { "vehicle_no", header.VehicleNo ?? "" },
+                                    { "nik", header.DriverCode ?? "" }
+                                }
+                            };
+                            await messaging.SendAsync(message);
+                        }
+                        catch (Exception fcmEx)
+                        {
+                            Console.WriteLine($"[FCM_CANCEL_ADMIN_ERROR] {admin.Username}: {fcmEx.Message}");
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[FCM_CANCEL_ADMIN_OUTER] {ex.Message}");
             }
         }
 
@@ -787,5 +1001,11 @@ namespace ffis_web_api.Controllers
     public class GateOutRequest
     {
         public string TransactionNo { get; set; } = string.Empty;
+    }
+
+    public class CancelP2HRequest
+    {
+        public Guid Oid { get; set; }
+        public string? Reason { get; set; }
     }
 }

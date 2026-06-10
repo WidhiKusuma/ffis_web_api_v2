@@ -130,6 +130,15 @@ namespace ffis_web_api.Repositories
             return null;
         }
 
+        public List<UserP2H> GetAllUsers()
+        {
+            using (var db = new SqlConnection(_connectionString))
+            {
+                var sql = "SELECT Oid, DriverCode, Username, FullName, LevelUser, CreatedAt, IsActive FROM UserP2H ORDER BY CreatedAt DESC";
+                return db.Query<UserP2H>(sql).ToList();
+            }
+        }
+
         public bool IsUserRegistered(string driverCode, string username)
         {
             var query = "SELECT COUNT(*) FROM UserP2H WHERE DriverCode = @DriverCode OR Username = @Username";
@@ -201,13 +210,13 @@ namespace ffis_web_api.Repositories
             return null;
         }
 
-        public bool UpdatePassword(string username, string newPassword)
+        public bool UpdatePassword(string identifier, string newPassword)
         {
-            var query = "UPDATE UserP2H SET Password = @Password WHERE Username = @Username";
+            var query = "UPDATE UserP2H SET Password = @Password WHERE Username = @Identifier OR DriverCode = @Identifier";
             using (var connection = new SqlConnection(_connectionString))
             using (var command = new SqlCommand(query, connection))
             {
-                command.Parameters.AddWithValue("@Username", username);
+                command.Parameters.AddWithValue("@Identifier", identifier);
                 command.Parameters.AddWithValue("@Password", EncryptAes(newPassword));
                 connection.Open();
                 return command.ExecuteNonQuery() > 0;
@@ -258,7 +267,15 @@ namespace ffis_web_api.Repositories
 
                         // Log Aktivitas
                         var logSql = "INSERT INTO P2HApprovalLog (Oid, HeaderOid, Status, ActionBy, ActionTime, Notes) VALUES (NEWID(), @HeaderOid, @Status, @ActionBy, GETDATE(), @Notes)";
-                        db.Execute(logSql, new { HeaderOid = header.Oid, Status = header.Status, ActionBy = header.DriverName, Notes = "Checklist diajukan oleh driver" }, trans);
+                        if (!header.NeedsApproval)
+                        {
+                            // Auto-approve: log langsung sebagai Approved oleh Sistem
+                            db.Execute(logSql, new { HeaderOid = header.Oid, Status = "Approved", ActionBy = "Sistem", Notes = "Disetujui otomatis - checklist lengkap, tidak ada temuan" }, trans);
+                        }
+                        else
+                        {
+                            db.Execute(logSql, new { HeaderOid = header.Oid, Status = "Waiting Approval", ActionBy = header.DriverName, Notes = "Checklist diajukan oleh driver" }, trans);
+                        }
 
                         trans.Commit();
                         return true;
@@ -272,12 +289,12 @@ namespace ffis_web_api.Repositories
             }
         }
 
-        public bool UpdateUserLevel(string username, string newLevel)
+        public bool UpdateUserLevel(string identifier, string newLevel)
         {
             using (var db = new SqlConnection(_connectionString))
             {
-                var sql = "UPDATE UserP2H SET LevelUser = @Level WHERE Username = @Username";
-                var result = db.Execute(sql, new { Level = newLevel, Username = username });
+                var sql = "UPDATE UserP2H SET LevelUser = @Level WHERE Username = @Identifier OR DriverCode = @Identifier";
+                var result = db.Execute(sql, new { Level = newLevel, Identifier = identifier });
                 return result > 0;
             }
         }
@@ -556,9 +573,9 @@ namespace ffis_web_api.Repositories
         {
             using (var db = new SqlConnection(_connectionString))
             {
-                var sql = @"SELECT TOP 1 * FROM P2HHeader 
-                            WHERE VehicleNo = @VehicleNo 
-                            AND (Status = 'Approved' OR Status = 'Gate Out' OR (ExitTime IS NOT NULL AND GateInTime IS NULL))
+                var sql = @"SELECT TOP 1 * FROM P2HHeader
+                            WHERE VehicleNo = @VehicleNo
+                            AND (Status = 'Waiting Approval' OR Status = 'Approved' OR Status = 'Gate Out' OR (ExitTime IS NOT NULL AND GateInTime IS NULL))
                             ORDER BY StartTime DESC";
                 return db.QueryFirstOrDefault<P2HHeader>(sql, new { VehicleNo = vehicleNo });
             }
@@ -608,7 +625,7 @@ namespace ffis_web_api.Repositories
                 {
                     try
                     {
-                        var sql = "UPDATE P2HHeader SET Status = 'BATAL' WHERE Oid = @Oid";
+                        var sql = "UPDATE P2HHeader SET Status = 'BATAL', IsAllowedToExit = 0, QrCodeData = NULL WHERE Oid = @Oid";
                         db.Execute(sql, new { Oid = oid }, trans);
 
                         var logSql = "INSERT INTO P2HApprovalLog (Oid, HeaderOid, Status, ActionBy, ActionTime, Notes) VALUES (NEWID(), @HeaderOid, 'BATAL', @ActionBy, GETDATE(), @Notes)";
@@ -684,7 +701,9 @@ namespace ffis_web_api.Repositories
                         (SELECT TOP 1 ActionTime FROM P2HApprovalLog WHERE HeaderOid = h.Oid AND Status IN ('Approved', 'Rejected', 'BATAL') ORDER BY ActionTime DESC) as ApprovedTime
                     FROM P2HHeader h 
                     WHERE h.Status IN ('Approved', 'Closed', 'BATAL', 'Rejected', 'Gate Out')
-                    AND (@ApproverName IS NULL OR EXISTS (SELECT 1 FROM P2HApprovalLog WHERE HeaderOid = h.Oid AND ActionBy = @ApproverName AND Status IN ('Approved', 'Rejected', 'BATAL')))";
+                    AND (@ApproverName IS NULL
+                         OR h.NeedsApproval = 0
+                         OR EXISTS (SELECT 1 FROM P2HApprovalLog WHERE HeaderOid = h.Oid AND ActionBy = @ApproverName AND Status IN ('Approved', 'Rejected', 'BATAL')))";
                 
                 if (start.HasValue)
                 {
