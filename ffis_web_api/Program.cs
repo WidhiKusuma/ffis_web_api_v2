@@ -8,11 +8,19 @@ using Npgsql;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Stopgap thread-pool starvation: banyak akses DB & validasi AD masih sinkron/blocking
+// (semua ke host 172.19.160.4). Menaikkan lantai thread mencegah worker kehabisan thread
+// saat host itu lambat -> worker tetap bisa membalas health-ping WAS -> tidak kena recycle (event 5078).
+// Ini penambal; solusi sebenarnya = async-kan akses DB + validasi AD.
+ThreadPool.SetMinThreads(200, 200);
+
 // Menambahkan Repository ke DI container
 builder.Services.AddScoped<UserRepository>();
 builder.Services.AddScoped<ITStockRepository>();
 builder.Services.AddScoped<DriverRepository>();
 builder.Services.AddScoped<ICbmRepository, CbmRepository>();
+builder.Services.AddScoped<ICmsYlidRepository, CmsYlidRepository>();
+builder.Services.AddScoped<ffis_web_api.Services.GraphMailService>();
 
 // Initialize Firebase Admin
 var fcmKeyPath = Path.Combine(builder.Environment.ContentRootPath, "fcm_key.json");
@@ -29,6 +37,10 @@ builder.Services.AddHttpClient("YLIDClient")
     {
         ServerCertificateCustomValidationCallback = (message, cert, chain, errors) => true
     });
+
+// Background job: pengingat harian masa berlaku SIM driver (H-60/30/15/7/0)
+builder.Services.AddSingleton<ffis_web_api.Services.SimExpiryJob>();
+builder.Services.AddHostedService<ffis_web_api.Services.SimExpiryNotificationService>();
 
 // Tambahkan koneksi database SQL Server (P2H)
 builder.Services.AddScoped<IDbConnection>(sp =>
@@ -71,6 +83,8 @@ app.UseSwagger();
 app.UseSwaggerUI();
 
 app.UseHttpsRedirection();
+
+app.UseMiddleware<ffis_web_api.AppVersionMiddleware>();
 
 app.UseAuthentication();
 app.UseAuthorization();

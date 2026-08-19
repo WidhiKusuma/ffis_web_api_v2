@@ -37,7 +37,8 @@ namespace ffis_web_api.Models
         public Guid Oid { get; set; }
         public Guid HeaderOid { get; set; }
         public Guid QuestionOid { get; set; }
-        public string Answer { get; set; } // YA, TIDAK, NA
+        public string? ItemCode { get; set; }
+        public string Answer { get; set; } // YA, TIDAK, N/A
         public string? Remarks { get; set; }
         public string? QuestionText { get; set; } // Virtual for display
         public string? Category { get; set; }
@@ -73,6 +74,8 @@ namespace ffis_web_api.Models
         public string ExitBy { get; set; }
         public string EntryBy { get; set; }
         public string Status { get; set; }
+        public int? ExitOdometer { get; set; }
+        public int? GateInOdometer { get; set; }
     }
 
     public class TruckStatus
@@ -83,6 +86,7 @@ namespace ffis_web_api.Models
         public string Status { get; set; } = string.Empty; // Normal, Service Soon, Overdue
         public int NextServiceKM { get; set; }
         public int RemainingKM { get; set; }
+        public int ThisMonthServiceKm { get; set; }
     }
 
     public class P2HNotification
@@ -103,5 +107,32 @@ namespace ffis_web_api.Models
         public string Username { get; set; } = string.Empty;
         public string DriverCode { get; set; } = string.Empty;
         public string FcmToken { get; set; } = string.Empty;
+    }
+
+    public class DocumentMonitorItem
+    {
+        public string Identifier { get; set; } = string.Empty; // NoPol atau Nama Driver
+        public string DocType { get; set; } = string.Empty;    // STNK, KIR, Pajak, SIM
+        public string Category { get; set; } = string.Empty;   // Kendaraan, Driver
+        public DateTime ExpiryDate { get; set; }
+        public int DaysRemaining { get; set; }
+        public string DocStatus { get; set; } = string.Empty;  // Mendekati Expired, Akan Expired, Sudah Expired
+    }
+
+    public class VehicleIssue
+    {
+        public Guid Oid { get; set; }
+        public string VehicleNo { get; set; } = string.Empty;
+        public string ItemCode { get; set; } = string.Empty;
+        public string? QuestionText { get; set; }
+        public string? Category { get; set; }
+        public string? Remarks { get; set; }
+        public string? ReportedBy { get; set; }
+        public DateTime ReportedTime { get; set; }
+        public Guid? HeaderOid { get; set; }
+        public bool IsResolved { get; set; }
+        public string? ResolvedBy { get; set; }
+        public DateTime? ResolvedTime { get; set; }
+        public string? ResolutionNote { get; set; }
     }
 }

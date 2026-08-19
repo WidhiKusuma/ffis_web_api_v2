@@ -364,3 +364,7 @@ FodyWeavers.xsd
 
 # Secrets - never commit, load from env/user-secrets or a local untracked copy
 ffis_web_api/fcm_key.json
+
+# Large binary build artifacts (exceed GitHub's 100MB file limit)
+*.apk
+ffis_web_api/downloads/

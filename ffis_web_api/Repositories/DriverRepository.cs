@@ -241,7 +241,7 @@ namespace ffis_web_api.Repositories
                     {
                         header.Oid = Guid.NewGuid();
                         header.TransactionNo = "P2H-" + DateTime.Now.ToString("yyyyMMdd-HHmmss");
-                        header.StartTime = DateTime.Now;
+                        header.StartTime = header.ChecklistStartTime ?? DateTime.Now;
                         
                         if (!header.NeedsApproval)
                         {
@@ -264,6 +264,8 @@ namespace ffis_web_api.Repositories
                             var detailSql = "INSERT INTO P2HDetail (Oid, HeaderOid, QuestionOid, Answer, Remarks) VALUES (@Oid, @HeaderOid, @QuestionOid, @Answer, @Remarks)";
                             db.Execute(detailSql, detail, trans);
                         }
+
+                        UpsertVehicleIssues(db, trans, header);
 
                         // Log Aktivitas
                         var logSql = "INSERT INTO P2HApprovalLog (Oid, HeaderOid, Status, ActionBy, ActionTime, Notes) VALUES (NEWID(), @HeaderOid, @Status, @ActionBy, GETDATE(), @Notes)";
@@ -378,7 +380,7 @@ namespace ffis_web_api.Repositories
 
                         // Log Aktivitas
                         var logSql = "INSERT INTO P2HApprovalLog (Oid, HeaderOid, Status, ActionBy, ActionTime, Notes) VALUES (NEWID(), @HeaderOid, 'Approved', @ActionBy, GETDATE(), @Notes)";
-                        db.Execute(logSql, new { HeaderOid = oid, ActionBy = actionBy, Notes = note ?? "Disetujui oleh Admin" }, trans);
+                        db.Execute(logSql, new { HeaderOid = oid, ActionBy = actionBy, Notes = string.IsNullOrWhiteSpace(note) ? null : note }, trans);
 
                         trans.Commit();
                         return true;
@@ -413,7 +415,7 @@ namespace ffis_web_api.Repositories
 
                         // Log Aktivitas
                         var logSql = "INSERT INTO P2HApprovalLog (Oid, HeaderOid, Status, ActionBy, ActionTime, Notes) VALUES (NEWID(), @HeaderOid, 'Rejected', @ActionBy, GETDATE(), @Notes)";
-                        db.Execute(logSql, new { HeaderOid = oid, ActionBy = actionBy, Notes = note ?? "Ditolak oleh Admin" }, trans);
+                        db.Execute(logSql, new { HeaderOid = oid, ActionBy = actionBy, Notes = string.IsNullOrWhiteSpace(note) ? null : note }, trans);
 
                         trans.Commit();
                         return true;
@@ -540,6 +542,8 @@ namespace ffis_web_api.Repositories
                             var detailSql = "INSERT INTO P2HDetail (Oid, HeaderOid, QuestionOid, Answer, Remarks) VALUES (@Oid, @HeaderOid, @QuestionOid, @Answer, @Remarks)";
                             db.Execute(detailSql, detail, trans);
                         }
+
+                        UpsertVehicleIssues(db, trans, header);
 
                         // Log Aktivitas
                         var logSql = "INSERT INTO P2HApprovalLog (Oid, HeaderOid, Status, ActionBy, ActionTime, Notes) VALUES (NEWID(), @HeaderOid, @Status, @ActionBy, GETDATE(), @Notes)";
@@ -745,6 +749,95 @@ namespace ffis_web_api.Repositories
             }
         }
 
+        // Item pertanyaan yang dianggap "temuan" pakai logika yang sama persis dengan
+        // blok "TEMUAN MASALAH" di Approvals.razor (ItemCode P2H-01/P2H-12 = pertanyaan
+        // induk, N/A = di-skip karena induk TIDAK, pertanyaan "keluhan" dibalik logikanya).
+        private static bool IsTemuan(P2HDetail d)
+        {
+            if (d.ItemCode == "P2H-01" || d.ItemCode == "P2H-12") return false;
+            if (d.Answer == "N/A") return false;
+            bool isKeluhan = d.QuestionText?.Contains("keluhan", StringComparison.OrdinalIgnoreCase) ?? false;
+            return (!isKeluhan && d.Answer == "TIDAK") || (isKeluhan && d.Answer == "YA");
+        }
+
+        public List<VehicleIssue> GetOpenVehicleIssues(string vehicleNo)
+        {
+            using (var db = new SqlConnection(_connectionString))
+            {
+                var sql = "SELECT * FROM P2HVehicleIssue WHERE VehicleNo = @VehicleNo AND IsResolved = 0 ORDER BY ReportedTime DESC";
+                return db.Query<VehicleIssue>(sql, new { VehicleNo = vehicleNo }).ToList();
+            }
+        }
+
+        public List<VehicleIssue> GetAllVehicleIssues()
+        {
+            using (var db = new SqlConnection(_connectionString))
+            {
+                var sql = "SELECT * FROM P2HVehicleIssue ORDER BY IsResolved ASC, ReportedTime DESC";
+                return db.Query<VehicleIssue>(sql).ToList();
+            }
+        }
+
+        private void UpsertVehicleIssues(SqlConnection db, IDbTransaction trans, P2HHeader header)
+        {
+            foreach (var d in header.Details.Where(IsTemuan))
+            {
+                var existingOid = db.QueryFirstOrDefault<Guid?>(
+                    "SELECT Oid FROM P2HVehicleIssue WHERE VehicleNo = @VehicleNo AND ItemCode = @ItemCode AND IsResolved = 0",
+                    new { VehicleNo = header.VehicleNo, ItemCode = d.ItemCode }, trans);
+
+                if (existingOid.HasValue)
+                {
+                    // ReportedBy/ReportedTime SENGAJA tidak di-update di sini: temuan yang sama muncul lagi
+                    // di submission berikutnya bukan berarti "baru dilaporkan" — durasi "sudah terbuka" harus
+                    // akumulasi sejak pertama kali dilaporkan, bukan reset tiap kali driver mengonfirmasi ulang.
+                    var updateSql = @"UPDATE P2HVehicleIssue
+                                     SET QuestionText = @QuestionText, Category = @Category, Remarks = @Remarks,
+                                         HeaderOid = @HeaderOid
+                                     WHERE Oid = @Oid";
+                    db.Execute(updateSql, new
+                    {
+                        Oid = existingOid.Value,
+                        QuestionText = d.QuestionText,
+                        Category = d.Category,
+                        Remarks = d.Remarks,
+                        HeaderOid = header.Oid
+                    }, trans);
+                }
+                else
+                {
+                    var insertSql = @"INSERT INTO P2HVehicleIssue
+                                     (Oid, VehicleNo, ItemCode, QuestionText, Category, Remarks, ReportedBy, ReportedTime, HeaderOid, IsResolved)
+                                     VALUES (NEWID(), @VehicleNo, @ItemCode, @QuestionText, @Category, @Remarks, @ReportedBy, GETDATE(), @HeaderOid, 0)";
+                    db.Execute(insertSql, new
+                    {
+                        VehicleNo = header.VehicleNo,
+                        ItemCode = d.ItemCode,
+                        QuestionText = d.QuestionText,
+                        Category = d.Category,
+                        Remarks = d.Remarks,
+                        ReportedBy = header.DriverName,
+                        HeaderOid = header.Oid
+                    }, trans);
+                }
+            }
+        }
+
+        public bool ResolveVehicleIssue(Guid issueOid, string resolvedBy, string resolutionNote)
+        {
+            using (var db = new SqlConnection(_connectionString))
+            {
+                var sql = @"UPDATE P2HVehicleIssue
+                           SET IsResolved = 1,
+                               ResolvedBy = @ResolvedBy,
+                               ResolvedTime = GETDATE(),
+                               ResolutionNote = @ResolutionNote
+                           WHERE Oid = @IssueOid AND IsResolved = 0";
+                var rows = db.Execute(sql, new { IssueOid = issueOid, ResolvedBy = resolvedBy, ResolutionNote = resolutionNote });
+                return rows > 0;
+            }
+        }
+
         public List<TruckStatus> GetTrucksWithServiceStatus()
         {
             using (var db = new SqlConnection(_connectionString))
@@ -789,11 +882,13 @@ namespace ffis_web_api.Repositories
                         h.TransactionNo, 
                         h.VehicleNo, 
                         h.DriverName, 
-                        h.ExitTime, 
+                        h.ExitTime,
                         h.GateInTime,
                         (SELECT TOP 1 ActionBy FROM P2HApprovalLog WHERE HeaderOid = h.Oid AND Status = 'Gate Out' ORDER BY ActionTime DESC) as ExitBy,
                         (SELECT TOP 1 ActionBy FROM P2HApprovalLog WHERE HeaderOid = h.Oid AND Status = 'Closed' ORDER BY ActionTime DESC) as EntryBy,
-                        h.Status
+                        h.Status,
+                        h.Odometer as ExitOdometer,
+                        h.GateInOdometer
                     FROM P2HHeader h
                     WHERE h.ExitTime IS NOT NULL
                     AND (@GateOfficerName IS NULL OR EXISTS (SELECT 1 FROM P2HApprovalLog WHERE HeaderOid = h.Oid AND ActionBy = @GateOfficerName AND Status IN ('Gate Out', 'Closed')))";
@@ -838,6 +933,16 @@ namespace ffis_web_api.Repositories
             catch (Exception ex)
             {
                 Console.WriteLine($"[DriverRepository] Error saving notification: {ex.Message}");
+            }
+        }
+
+        /// <summary>Cek apakah notifikasi (mis. pengingat SIM) dengan kunci TransactionNo tertentu sudah pernah dibuat untuk nik ini. Dipakai untuk dedup job terjadwal.</summary>
+        public bool SimNotifExists(string nik, string transactionNo)
+        {
+            using (var db = new SqlConnection(_connectionString))
+            {
+                var sql = "SELECT COUNT(1) FROM P2HNotification WHERE Nik = @Nik AND TransactionNo = @TransactionNo";
+                return db.ExecuteScalar<int>(sql, new { Nik = nik, TransactionNo = transactionNo }) > 0;
             }
         }
 

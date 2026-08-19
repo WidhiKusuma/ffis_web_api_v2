@@ -14,12 +14,14 @@ namespace ffis_web_api.Controllers
         private readonly DriverRepository _driverRepository;
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly IConfiguration _configuration;
+        private readonly ffis_web_api.Services.SimExpiryJob _simExpiryJob;
 
-        public P2HController(DriverRepository driverRepository, IHttpClientFactory httpClientFactory, IConfiguration configuration)
+        public P2HController(DriverRepository driverRepository, IHttpClientFactory httpClientFactory, IConfiguration configuration, ffis_web_api.Services.SimExpiryJob simExpiryJob)
         {
             _driverRepository = driverRepository;
             _httpClientFactory = httpClientFactory;
             _configuration = configuration;
+            _simExpiryJob = simExpiryJob;
         }
 
         private string GetCurrentUserNIK() => User.FindFirst("nik")?.Value ?? "";
@@ -143,6 +145,36 @@ namespace ffis_web_api.Controllers
             }
         }
 
+        [HttpPost("update-vehicle-km")]
+        public async Task<IActionResult> UpdateVehicleCurrentKM([FromQuery] string noPol, [FromQuery] int currentKM)
+        {
+            try
+            {
+                var baseUrl = _configuration["ExternalApi:BaseUrl"];
+                var apiKey = _configuration["ExternalApi:ApiKey"];
+                var url = $"{baseUrl}post-vehicle-licenses-currentkm?noPol={Uri.EscapeDataString(noPol)}&currentKM={currentKM}";
+
+                var client = _httpClientFactory.CreateClient("YLIDClient");
+                var request = new HttpRequestMessage(HttpMethod.Post, url);
+                request.Headers.Add("APIKEY", apiKey);
+
+                var response = await client.SendAsync(request);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    var result = await response.Content.ReadAsStringAsync();
+                    return Ok(new { success = true, message = "Odometer berhasil diperbarui.", data = result });
+                }
+
+                var error = await response.Content.ReadAsStringAsync();
+                return StatusCode((int)response.StatusCode, new { success = false, message = error });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { success = false, message = ex.Message });
+            }
+        }
+
         [HttpPost("submit")]
         public IActionResult SubmitP2H([FromBody] P2HHeader header)
         {
@@ -151,6 +183,20 @@ namespace ffis_web_api.Controllers
                 if (header == null || string.IsNullOrEmpty(header.VehicleNo))
                 {
                     return BadRequest("Invalid checklist data.");
+                }
+
+                var openIssues = _driverRepository.GetOpenVehicleIssues(header.VehicleNo);
+                if (openIssues.Any())
+                {
+                    foreach (var d in header.Details)
+                    {
+                        bool isComplaint = d.Category == "KELUHAN" || (d.QuestionText?.Contains("keluhan", StringComparison.OrdinalIgnoreCase) ?? false);
+                        string okAnswer = isComplaint ? "TIDAK" : "YA";
+                        if (d.Answer == okAnswer && openIssues.Any(i => i.ItemCode == d.ItemCode))
+                        {
+                            return BadRequest($"Tidak bisa menjawab {okAnswer} pada '{d.QuestionText}' — masih ada temuan yang belum diselesaikan untuk unit ini. Selesaikan dulu di Menu Utama.");
+                        }
+                    }
                 }
 
                 header.Status = header.NeedsApproval ? "Waiting Approval" : "Approved";
@@ -521,9 +567,84 @@ namespace ffis_web_api.Controllers
         }
 
         [HttpGet("trucks")]
-        public IActionResult GetTruckStatus()
+        public async Task<IActionResult> GetTruckStatus()
         {
             var items = _driverRepository.GetTrucksWithServiceStatus();
+
+            var baseUrl = _configuration["ExternalApi:BaseUrl"];
+            var apiKey = _configuration["ExternalApi:ApiKey"];
+
+            if (!string.IsNullOrEmpty(baseUrl) && !string.IsNullOrEmpty(apiKey))
+            {
+                var client = _httpClientFactory.CreateClient("YLIDClient");
+
+                // Fetch currentKM dari proxy eksternal untuk semua unit secara paralel
+                var tasks = items.Select(async truck =>
+                {
+                    try
+                    {
+                        var url = $"{baseUrl}get-vehicle-licenses?search={Uri.EscapeDataString(truck.VehicleNo)}";
+                        var req = new HttpRequestMessage(HttpMethod.Get, url);
+                        req.Headers.Add("APIKEY", apiKey);
+                        var resp = await client.SendAsync(req);
+                        if (!resp.IsSuccessStatusCode) return;
+
+                        var json = await resp.Content.ReadAsStringAsync();
+                        using var doc = System.Text.Json.JsonDocument.Parse(json);
+                        var root = doc.RootElement;
+
+                        var arr = root.ValueKind == System.Text.Json.JsonValueKind.Array ? root :
+                                  root.TryGetProperty("data", out var d) ? d : default;
+
+                        if (arr.ValueKind != System.Text.Json.JsonValueKind.Array) return;
+
+                        foreach (var item in arr.EnumerateArray())
+                        {
+                            string? itemNoPol = null;
+                            if (item.TryGetProperty("noPol", out var np)) itemNoPol = np.GetString();
+                            else if (item.TryGetProperty("NoPol", out np)) itemNoPol = np.GetString();
+
+                            if (!string.Equals(itemNoPol, truck.VehicleNo, StringComparison.OrdinalIgnoreCase)) continue;
+
+                            int? proxyKM = null;
+                            if (item.TryGetProperty("currentKM", out var km) || item.TryGetProperty("CurrentKM", out km))
+                            {
+                                if (km.ValueKind == System.Text.Json.JsonValueKind.Number) proxyKM = km.GetInt32();
+                                else if (km.ValueKind == System.Text.Json.JsonValueKind.String && int.TryParse(km.GetString(), out var v)) proxyKM = v;
+                            }
+
+                            int? thisMonthSvcKm = null;
+                            if (item.TryGetProperty("thisMonthServiceKm", out var svcKm) || item.TryGetProperty("ThisMonthServiceKm", out svcKm))
+                            {
+                                if (svcKm.ValueKind == System.Text.Json.JsonValueKind.Number) thisMonthSvcKm = svcKm.GetInt32();
+                                else if (svcKm.ValueKind == System.Text.Json.JsonValueKind.String && int.TryParse(svcKm.GetString(), out var sv)) thisMonthSvcKm = sv;
+                            }
+
+                            truck.LastOdometer = proxyKM ?? 0;
+                            if (thisMonthSvcKm.HasValue && thisMonthSvcKm.Value > 0)
+                            {
+                                truck.ThisMonthServiceKm = thisMonthSvcKm.Value;
+                                truck.NextServiceKM = thisMonthSvcKm.Value + 10000;
+                                truck.RemainingKM = truck.NextServiceKM - truck.LastOdometer;
+                            }
+                            else
+                            {
+                                const int Interval = 10000;
+                                truck.NextServiceKM = ((truck.LastOdometer / Interval) + 1) * Interval;
+                                truck.RemainingKM = truck.NextServiceKM - truck.LastOdometer;
+                            }
+                            truck.Status = truck.RemainingKM <= 500 ? "Servis Sekarang"
+                                         : truck.RemainingKM <= 1500 ? "Segera Servis"
+                                         : "Normal";
+                            break;
+                        }
+                    }
+                    catch { /* Jika proxy gagal, tetap pakai nilai dari DB */ }
+                });
+
+                await Task.WhenAll(tasks);
+            }
+
             return Ok(items);
         }
 
@@ -567,6 +688,20 @@ namespace ffis_web_api.Controllers
             if (header == null || header.Oid == Guid.Empty)
             {
                 return BadRequest("Invalid checklist data.");
+            }
+
+            var openIssuesOnUpdate = _driverRepository.GetOpenVehicleIssues(header.VehicleNo);
+            if (openIssuesOnUpdate.Any())
+            {
+                foreach (var d in header.Details)
+                {
+                    bool isComplaint = d.Category == "KELUHAN" || (d.QuestionText?.Contains("keluhan", StringComparison.OrdinalIgnoreCase) ?? false);
+                    string okAnswer = isComplaint ? "TIDAK" : "YA";
+                    if (d.Answer == okAnswer && openIssuesOnUpdate.Any(i => i.ItemCode == d.ItemCode))
+                    {
+                        return BadRequest($"Tidak bisa menjawab {okAnswer} pada '{d.QuestionText}' — masih ada temuan yang belum diselesaikan untuk unit ini. Selesaikan dulu di Menu Utama.");
+                    }
+                }
             }
 
             if (_driverRepository.UpdateP2H(header))
@@ -716,6 +851,40 @@ namespace ffis_web_api.Controllers
                 return Ok(new { Message = $"P2H {status} Successfully" });
             }
             return BadRequest("Gagal memproses. Form P2H ini sudah disetujui atau ditolak oleh Admin Transport lain.");
+        }
+
+        [HttpGet("vehicle-issues/{vehicleNo}")]
+        public IActionResult GetVehicleIssues(string vehicleNo)
+        {
+            var items = _driverRepository.GetOpenVehicleIssues(vehicleNo);
+            return Ok(items);
+        }
+
+        [HttpPost("vehicle-issues/resolve")]
+        public IActionResult ResolveVehicleIssue([FromBody] VehicleIssueResolveRequest request)
+        {
+            if (string.IsNullOrWhiteSpace(request.ResolutionNote))
+            {
+                return BadRequest("Keterangan penyelesaian wajib diisi.");
+            }
+
+            bool success = _driverRepository.ResolveVehicleIssue(request.IssueOid, GetCurrentUserName(), request.ResolutionNote);
+            if (!success) return BadRequest("Gagal menyimpan. Temuan ini mungkin sudah diselesaikan sebelumnya.");
+
+            return Ok(new { Message = "Temuan berhasil diselesaikan." });
+        }
+
+        [HttpGet("vehicle-issues-report")]
+        public IActionResult GetVehicleIssuesReport()
+        {
+            var role = GetCurrentUserRole().ToUpper();
+            if (!IsAdminOrGate() && role != "ADMIN TRANSPORT")
+            {
+                return Forbid();
+            }
+
+            var items = _driverRepository.GetAllVehicleIssues();
+            return Ok(items);
         }
 
         private async Task NotifyDriver(P2HHeader header)
@@ -934,6 +1103,163 @@ namespace ffis_web_api.Controllers
             }
         }
 
+        [HttpGet("document-monitoring")]
+        public async Task<IActionResult> GetDocumentMonitoring()
+        {
+            var results = new System.Collections.Concurrent.ConcurrentBag<DocumentMonitorItem>();
+            var baseUrl = _configuration["ExternalApi:BaseUrl"];
+            var apiKey  = _configuration["ExternalApi:ApiKey"];
+
+            if (string.IsNullOrEmpty(baseUrl) || string.IsNullOrEmpty(apiKey))
+                return Ok(results.ToList());
+
+            var client    = _httpClientFactory.CreateClient("YLIDClient");
+            var semaphore = new SemaphoreSlim(5);
+
+            static string CalcStatus(int days) =>
+                days < 0 ? "Sudah Expired" : days <= 14 ? "Akan Expired" : "Mendekati Expired";
+
+            // --- Vehicle documents ---
+            var trucks = _driverRepository.GetTrucksWithServiceStatus();
+            var vehicleTasks = trucks.Select(async truck =>
+            {
+                await semaphore.WaitAsync();
+                try
+                {
+                    var url = $"{baseUrl}get-vehicle-licenses?search={Uri.EscapeDataString(truck.VehicleNo)}";
+                    var req = new HttpRequestMessage(HttpMethod.Get, url);
+                    req.Headers.Add("APIKEY", apiKey);
+                    var resp = await client.SendAsync(req);
+                    if (!resp.IsSuccessStatusCode) return;
+
+                    var json = await resp.Content.ReadAsStringAsync();
+                    using var doc = System.Text.Json.JsonDocument.Parse(json);
+                    var root = doc.RootElement;
+
+                    var arr = root.ValueKind == System.Text.Json.JsonValueKind.Array ? root :
+                              root.TryGetProperty("data", out var d) ? d : default;
+                    if (arr.ValueKind != System.Text.Json.JsonValueKind.Array) return;
+
+                    foreach (var item in arr.EnumerateArray())
+                    {
+                        string? noPol = null;
+                        if (item.TryGetProperty("noPol", out var np) || item.TryGetProperty("NoPol", out np))
+                            noPol = np.GetString();
+                        if (!string.Equals(noPol, truck.VehicleNo, StringComparison.OrdinalIgnoreCase)) continue;
+
+                        string? docType = null;
+                        if (item.TryGetProperty("vehicleDocuments", out var vd) || item.TryGetProperty("VehicleDocuments", out vd))
+                            docType = vd.GetString();
+
+                        string? expiryStr = null;
+                        if (item.TryGetProperty("expiryDate", out var ed) || item.TryGetProperty("ExpiryDate", out ed))
+                            expiryStr = ed.GetString();
+
+                        if (string.IsNullOrEmpty(docType) || !DateTime.TryParse(expiryStr, out var expDate)) continue;
+
+                        var days = (int)(expDate.Date - DateTime.Today).TotalDays;
+                        if (days > 30) continue; // hanya tampilkan yang perlu perhatian
+
+                        results.Add(new DocumentMonitorItem
+                        {
+                            Identifier   = truck.VehicleNo,
+                            DocType      = docType,
+                            Category     = "Kendaraan",
+                            ExpiryDate   = expDate,
+                            DaysRemaining = days,
+                            DocStatus    = CalcStatus(days)
+                        });
+                    }
+                }
+                catch { }
+                finally { semaphore.Release(); }
+            });
+
+            // --- Driver SIM ---
+            var users = _driverRepository.GetAllUsers()
+                .Where(u => u.LevelUser == "Driver" && !string.IsNullOrEmpty(u.DriverCode))
+                .ToList();
+
+            var driverTasks = users.Select(async user =>
+            {
+                await semaphore.WaitAsync();
+                try
+                {
+                    var url = $"{baseUrl}get-driver-licenses?nik={Uri.EscapeDataString(user.DriverCode)}";
+                    var req = new HttpRequestMessage(HttpMethod.Get, url);
+                    req.Headers.Add("APIKEY", apiKey);
+                    var resp = await client.SendAsync(req);
+                    if (!resp.IsSuccessStatusCode) return;
+
+                    var json = await resp.Content.ReadAsStringAsync();
+                    using var doc = System.Text.Json.JsonDocument.Parse(json);
+                    var root = doc.RootElement;
+
+                    var arr = root.TryGetProperty("data", out var d) ? d :
+                              root.ValueKind == System.Text.Json.JsonValueKind.Array ? root : default;
+                    if (arr.ValueKind != System.Text.Json.JsonValueKind.Array) return;
+
+                    foreach (var item in arr.EnumerateArray())
+                    {
+                        string? expiryStr = null;
+                        if (item.TryGetProperty("expiryDate", out var ed) || item.TryGetProperty("ExpiryDate", out ed))
+                            expiryStr = ed.GetString();
+                        if (!DateTime.TryParse(expiryStr, out var expDate)) continue;
+
+                        string? driverName = null;
+                        if (item.TryGetProperty("fullName", out var fn) || item.TryGetProperty("FullName", out fn))
+                            driverName = fn.GetString();
+
+                        var days = (int)(expDate.Date - DateTime.Today).TotalDays;
+                        if (days > 30) continue;
+
+                        results.Add(new DocumentMonitorItem
+                        {
+                            Identifier    = driverName ?? user.FullName,
+                            DocType       = "SIM",
+                            Category      = "Driver",
+                            ExpiryDate    = expDate,
+                            DaysRemaining = days,
+                            DocStatus     = CalcStatus(days)
+                        });
+                    }
+                }
+                catch { }
+                finally { semaphore.Release(); }
+            });
+
+            await Task.WhenAll(vehicleTasks.Concat(driverTasks));
+
+            return Ok(results.OrderBy(r => r.DaysRemaining).ToList());
+        }
+
+        // ── Job pengingat SIM: status & trigger manual (admin only) ──
+
+        private bool IsAdmin()
+        {
+            var role = GetCurrentUserRole().ToUpper();
+            var level = User.FindFirst("level")?.Value?.ToUpper() ?? "";
+            return role.Contains("ADMIN") || level.Contains("ADMIN") ||
+                   role == "ADMINISTRATOR" || level == "ADMINISTRATOR";
+        }
+
+        /// <summary>Status eksekusi terakhir job pengingat SIM (kapan jalan, berapa notif terkirim, error, jadwal berikutnya).</summary>
+        [HttpGet("jobs/sim-expiry-status")]
+        public IActionResult GetSimExpiryStatus()
+        {
+            if (!IsAdmin()) return Forbid();
+            return Ok(_simExpiryJob.GetStatus());
+        }
+
+        /// <summary>Jalankan job pengingat SIM sekarang juga (untuk testing/verifikasi tanpa menunggu jadwal harian).</summary>
+        [HttpPost("jobs/check-sim-expiry")]
+        public async Task<IActionResult> TriggerSimExpiry(CancellationToken ct)
+        {
+            if (!IsAdmin()) return Forbid();
+            var status = await _simExpiryJob.RunAsync("manual", ct);
+            return Ok(status);
+        }
+
         [HttpGet("notifications/{nik}")]
         public IActionResult GetNotifications(string nik)
         {
@@ -996,6 +1322,12 @@ namespace ffis_web_api.Controllers
         public Guid Oid { get; set; }
         public string? Note { get; set; }
         public string? Status { get; set; } // Approved or Rejected
+    }
+
+    public class VehicleIssueResolveRequest
+    {
+        public Guid IssueOid { get; set; }
+        public string? ResolutionNote { get; set; }
     }
 
     public class GateOutRequest

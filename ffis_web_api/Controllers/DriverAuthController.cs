@@ -121,7 +121,7 @@ namespace ffis_web_api.Controllers
             return Ok(result);
         }
 
-        [Authorize]
+        [AllowAnonymous]
         [HttpPost("reset-password")]
         public IActionResult ResetPassword([FromBody] ResetPasswordRequestDTO request)
         {
